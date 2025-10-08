@@ -7,12 +7,16 @@ mod metadata;
 mod quick_check;
 mod stats;
 mod hash;
+mod parallel;
+mod thread_pool;
 
 pub use {
     metadata::MetadataStage,
     quick_check::QuickCheckStage,
     stats::StatisticalStage,
     hash::HashStage,
+    parallel::{ParallelPipeline, ParallelConfig, PipelineMetrics, MetricsSnapshot},
+    thread_pool::{ThreadPoolManager, ThreadPoolConfig, WorkUnit, WorkPriority, WorkerStats},
 };
 
 /// Represents the processing result for a file or group of files
