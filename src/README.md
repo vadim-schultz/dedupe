@@ -190,7 +190,6 @@ For near-duplicate detection:
    - File grouping using `indexmap` for ordered collections
    - Fast integer-based size comparison with `bytesize`
    - Memory-efficient metadata storage using `smallvec`
-   - Integration testing with `cucumber-rust` for behavior testing
 
 ### Phase 3: Multi-Threading (2-3 days)
 

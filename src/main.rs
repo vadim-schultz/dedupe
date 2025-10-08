@@ -39,6 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .pretty()
         .init();
 
+
+
     // Parse command line arguments
     let args = Args::parse();
     
@@ -61,17 +63,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let walker = Walker::new(config.clone());
     let _progress = ProgressTracker::new();
 
-    // Initialize pipeline stages
-    let _stages: Vec<Box<dyn pipeline::PipelineStage>> = vec![
-        Box::new(MetadataStage::new(config.min_file_size)),
-        Box::new(QuickCheckStage::new(config.quick_check_sample_size)),
-        Box::new(StatisticalStage::new(config.similarity_threshold)),
-        Box::new(HashStage::new()),
-    ];
+    // Initialize pipeline
+    let mut pipeline = pipeline::Pipeline::new();
+    pipeline.add_stage(MetadataStage::new(config.clone()));
+    pipeline.add_stage(QuickCheckStage::new(Some(config.quick_check_sample_size)));
+    pipeline.add_stage(StatisticalStage::new(config.similarity_threshold));
+    pipeline.add_stage(HashStage::new(None));
 
     info!("Scanning directory for files...");
     let files = walker.walk(&args.dir)?;
     info!("Found {} files to process", files.len());
+    
+    // Process files through pipeline
+    let duplicate_groups = pipeline.execute(files).await?;
+    
+    // Report results
+    for (i, group) in duplicate_groups.iter().enumerate() {
+        if group.len() > 1 {
+            info!("Duplicate group {}:", i + 1);
+            for file in group {
+                info!("  - {} ({} bytes)", file.path, file.size);
+            }
+        }
+    }
     
     Ok(())
 }

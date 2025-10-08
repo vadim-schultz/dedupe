@@ -24,6 +24,9 @@ num_cpus = "1.16"
 config = "0.13"
 rstest = "0.18"
 
+indexmap = "2.11.4"
+blake3 = "1.8.2"
+
 [dev-dependencies]
 pretty_assertions = "1.4"
 test-case = "3.1"
