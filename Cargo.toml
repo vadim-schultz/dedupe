@@ -37,9 +37,19 @@ tokio-metrics = "0.3"
 fastrand = "2.0"
 criterion = { version = "0.5", optional = true }
 
+# Phase 4 dependencies - Additional Stages
+memmap2 = "0.9"
+statrs = "0.17"  
+proptest = { version = "1.4", optional = true }
+
+# Report generation dependencies (Phase 6 partial)
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
 [features]
 default = []
 benchmarks = ["criterion"]
+testing = ["proptest"]
 
 [[bench]]
 name = "parallel_pipeline"

@@ -7,12 +7,14 @@ mod config;
 mod walker;
 mod pipeline;
 mod utils;
+mod report;
 
 use crate::{
     config::Config,
     walker::Walker,
     pipeline::{MetadataStage, QuickCheckStage, StatisticalStage, HashStage, ParallelPipeline, ParallelConfig},
     utils::progress::ProgressTracker,
+    report::{DeduplicationReport, ScanConfig},
 };
 
 #[derive(Parser, Debug)]
@@ -27,38 +29,55 @@ struct Args {
     depth: u32,
 
     /// Minimum file size to consider (in bytes)
-    #[arg(short, long, default_value_t = 1)]
+    #[arg(short, long, default_value_t = 1024)]
     min_size: u64,
 
-    /// Use parallel pipeline processing
-    #[arg(short, long, default_value_t = false)]
+    /// Use parallel pipeline processing (enabled by default)
+    #[arg(short, long, default_value_t = true)]
     parallel: bool,
 
-    /// Number of worker threads for parallel processing
+    /// Number of worker threads for parallel processing (0 = auto-detect)
     #[arg(short, long, default_value_t = 0)]
     threads: usize,
+
+    /// Enable verbose logging
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
+
+    /// Report output format
+    #[arg(short = 'f', long, default_value = "text")]
+    format: String,
+
+    /// Output file path (if not specified, output to console)
+    #[arg(short, long)]
+    output: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .pretty()
-        .init();
-
-
-
-    // Parse command line arguments
+    // Parse command line arguments first to check verbosity
     let args = Args::parse();
     
-    info!("Starting dedupe scan on directory: {}", args.dir);
-    info!("Maximum depth: {}", args.depth);
-    info!("Minimum file size: {} bytes", args.min_size);
-    info!("Parallel processing: {}", args.parallel);
+    // Initialize logging based on verbosity
+    let log_level = if args.verbose { Level::DEBUG } else { Level::INFO };
+    FmtSubscriber::builder()
+        .with_max_level(log_level)
+        .compact() // Use compact format instead of pretty for cleaner output
+        .without_time() // Remove timestamps for cleaner output
+        .with_target(false) // Remove target info like "at src\main.rs:125"
+        .init();
+
+    info!("Starting file deduplication scan");
+    info!("Directory: {}", args.dir);
     
     let thread_count = if args.threads > 0 { args.threads } else { num_cpus::get() };
-    info!("Using {} worker threads", thread_count);
+    
+    if args.verbose {
+        info!("Maximum depth: {}", args.depth);
+        info!("Minimum file size: {} bytes", args.min_size);
+        info!("Parallel processing: {}", args.parallel);
+        info!("Worker threads: {}", thread_count);
+    }
 
     // Create configuration
     let config = Arc::new(Config {
@@ -75,13 +94,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let walker = Walker::new(config.clone());
     let _progress = ProgressTracker::new();
 
-    info!("Scanning directory for files...");
+    info!("Scanning files...");
     let files = walker.walk(&args.dir)?;
-    info!("Found {} files to process", files.len());
+    info!("Found {} files", files.len());
     
-    // Process files through pipeline (parallel or sequential)
+    let total_files_found = files.len();
+    
+    // Process files through pipeline
+    let start_time = std::time::Instant::now();
     let duplicate_groups = if args.parallel {
-        info!("Using parallel pipeline processing");
+        use tracing::debug;
+        debug!("Initializing parallel pipeline with {} threads", thread_count);
+        
         let parallel_config = ParallelConfig {
             threads_per_stage: thread_count,
             channel_capacity: 1000,
@@ -92,38 +116,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         let mut parallel_pipeline = ParallelPipeline::new(parallel_config)?;
         parallel_pipeline.add_stage(MetadataStage::new(config.clone()));
-        parallel_pipeline.add_stage(QuickCheckStage::new(Some(config.quick_check_sample_size)));
-        parallel_pipeline.add_stage(StatisticalStage::new(config.similarity_threshold));
+        parallel_pipeline.add_stage(QuickCheckStage::new(config.clone()));
+        parallel_pipeline.add_stage(StatisticalStage::new(config.clone()));
         parallel_pipeline.add_stage(HashStage::new(None));
         
-        let start_time = std::time::Instant::now();
+        info!("Processing files...");
         let result = parallel_pipeline.execute(files).await?;
-        let execution_time = start_time.elapsed();
         
-        info!("Parallel pipeline execution completed in {:?}", execution_time);
         let metrics = parallel_pipeline.metrics();
-        info!("Processed {} files with {} files/sec throughput", 
-              metrics.files_processed, metrics.throughput);
+        info!("Completed processing ({} files/sec)", metrics.throughput);
         
         result
     } else {
-        info!("Using sequential pipeline processing");
+        use tracing::debug;
+        debug!("Using sequential pipeline processing");
+        
         let mut pipeline = pipeline::Pipeline::new();
         pipeline.add_stage(MetadataStage::new(config.clone()));
-        pipeline.add_stage(QuickCheckStage::new(Some(config.quick_check_sample_size)));
-        pipeline.add_stage(StatisticalStage::new(config.similarity_threshold));
+        pipeline.add_stage(QuickCheckStage::new(config.clone()));
+        pipeline.add_stage(StatisticalStage::new(config.clone()));
         pipeline.add_stage(HashStage::new(None));
         
+        info!("Processing files...");
         pipeline.execute(files).await?
     };
     
-    // Report results
-    for (i, group) in duplicate_groups.iter().enumerate() {
-        if group.len() > 1 {
-            info!("Duplicate group {}:", i + 1);
-            for file in group {
-                info!("  - {} ({} bytes)", file.path, file.size);
-            }
+    let execution_time = start_time.elapsed();
+    
+    // Generate and display report
+    let scan_config = ScanConfig {
+        directory: args.dir.clone(),
+        max_depth: if args.depth == std::u32::MAX { None } else { Some(args.depth as usize) },
+        min_file_size: args.min_size,
+        similarity_threshold: config.similarity_threshold,
+        parallel_processing: args.parallel,
+        thread_count,
+    };
+
+    let report = DeduplicationReport::new(
+        duplicate_groups,
+        total_files_found,
+        execution_time,
+        if execution_time.as_secs_f64() > 0.0 { 
+            total_files_found as f64 / execution_time.as_secs_f64() 
+        } else { 
+            0.0 
+        },
+        scan_config,
+    );
+
+    // Generate report in requested format
+    let report_content = match args.format.to_lowercase().as_str() {
+        "text" => report.to_text()?,
+        "json" => report.to_json_pretty()?,
+        "csv" => report.to_csv()?,
+        _ => {
+            eprintln!("Error: Unsupported format '{}'. Supported formats: text, json, csv", args.format);
+            std::process::exit(1);
+        }
+    };
+
+    // Output to file or console
+    match args.output {
+        Some(output_path) => {
+            std::fs::write(&output_path, &report_content)?;
+            info!("Report saved to: {}", output_path);
+        }
+        None => {
+            println!("{}", report_content);
         }
     }
     

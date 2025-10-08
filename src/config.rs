@@ -44,9 +44,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             max_depth: None,
-            min_file_size: 1,
-            threads_per_stage: num_cpus::get(),
-            quick_check_sample_size: 4096,
+            min_file_size: 1024, // Skip files smaller than 1KB by default
+            threads_per_stage: num_cpus::get().max(1), // Use all available cores
+            quick_check_sample_size: 8192, // 8KB sample for better accuracy
             similarity_threshold: 95,
             mode: OperationMode::Report,
         }

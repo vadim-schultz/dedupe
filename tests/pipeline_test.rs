@@ -34,17 +34,21 @@ mod tests {
     async fn test_metadata_stage() -> Result<()> {
         let temp_dir = tempdir()?;
         
-        // Create test files with same size
-        let content1 = b"test content 1";
-        let content2 = b"test content 2";
+        // Create test files with same size - use longer content to ensure they meet minimum size requirements
+        let content1 = b"this is test content for file number 1 with enough bytes";
+        let content2 = b"this is test content for file number 2 with enough bytes";
         let file1 = create_test_file(temp_dir.path(), "file1.txt", content1)?;
         let file2 = create_test_file(temp_dir.path(), "file2.txt", content2)?;
         
         // Create file with different size
-        let content3 = b"different";
+        let content3 = b"different sized content that is much shorter";
         let file3 = create_test_file(temp_dir.path(), "file3.txt", content3)?;
 
-        let config = Arc::new(Config::default());
+        // Use config with min file size of 0 to ensure all files are processed
+        let config = Arc::new(Config {
+            min_file_size: 0,
+            ..Config::default()
+        });
         let stage = MetadataStage::new(config);
         let files = vec![file1.clone(), file2.clone(), file3.clone()];
         let result = stage.process(files).await?;
@@ -77,23 +81,27 @@ mod tests {
     async fn test_pipeline_execution() -> Result<()> {
         let temp_dir = tempdir()?;
         
-        // Create multiple sets of duplicate-size files
-        let content1 = b"test content 1";
-        let content2 = b"test content 2";
-        let content3 = b"different sized content";
+        // Create test files with same size - use longer content to ensure they meet minimum size requirements
+        let content1 = b"this is test content for file number 1a with enough bytes";
+        let content2 = b"this is test content for file number 1b with enough bytes";
+        let content3 = b"different sized content that is much shorter than the others";
         
         let file1a = create_test_file(temp_dir.path(), "file1a.txt", content1)?;
         let file1b = create_test_file(temp_dir.path(), "file1b.txt", content2)?;
         let file2 = create_test_file(temp_dir.path(), "file2.txt", content3)?;
 
         let mut pipeline = Pipeline::new();
-        let config = Arc::new(Config::default());
+        // Use config with min file size of 0 to ensure all files are processed
+        let config = Arc::new(Config {
+            min_file_size: 0,
+            ..Config::default()
+        });
         pipeline.add_stage(MetadataStage::new(config));
 
         let files = vec![file1a.clone(), file1b.clone(), file2.clone()];
         let result = pipeline.execute(files).await?;
 
-        // Verify pipeline results
+        // Verify pipeline results - MetadataStage groups by size, so we should get 2 groups
         assert_eq!(result.len(), 2); // Two groups: one for same-size files, one for unique file
         assert!(result.iter().any(|g| g.len() == 1 && g[0].path == file2.path));
         assert!(result.iter().any(|g| {

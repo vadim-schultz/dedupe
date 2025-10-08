@@ -1,14 +1,10 @@
-# Dedupe - File Deduplication Tool
+# Dedupe - High-Performance File Deduplication Tool
 
-A fast and flexible file deduplication tool written in Rust that helps you find and manage duplicate files across your system.
+A fast, parallel file deduplication tool written in Rust that uses advanced algorithms to find and report duplicate files across your system.
 
 ## Installation
 
-```bash
-cargo install dedupe
-```
-
-Or build from source:
+Build from source:
 
 ```bash
 git clone https://github.com/vadim-schultz/dedupe
@@ -18,149 +14,207 @@ cargo build --release
 
 ## Quick Start
 
-Basic usage to find duplicates in a directory:
+Basic usage to find duplicates in the current directory:
+
+```bash
+dedupe
+```
+
+Scan a specific directory:
 
 ```bash
 dedupe /path/to/directory
 ```
 
-Scan with a maximum depth of 3 directories:
+Generate JSON report:
 
 ```bash
-dedupe --depth 3 /path/to/directory
+dedupe --format json --output duplicates.json /path/to/directory
 ```
-
-Use a configuration file:
-
-```bash
-dedupe --config my-config.yaml /path/to/directory
-```
-
-## Configuration
-
-Dedupe can be configured using a YAML configuration file. Create a copy of `config.example.yaml` and modify it according to your needs:
-
-```bash
-cp config.example.yaml my-config.yaml
-```
-
-### Configuration Options
-
-#### File Selection
-
-- `min_file_size`: Minimum file size to consider (in bytes)
-- `max_depth`: Maximum directory depth to scan
-- `include_types`: List of file types to include (mime types or extensions)
-- `exclude_types`: List of file types to exclude
-- `exclude_dirs`: Directories to skip during scanning
-- `follow_links`: Whether to follow symbolic links
-
-#### Deduplication Strategy
-
-- `strategy`: Choose between "hash" (content-based) or "metadata" (quick comparison)
-- `hash_algorithm`: Select the hashing algorithm (sha256, sha1, or blake3)
-- `duplicate_action`: Action to take when duplicates are found:
-  - `report`: List duplicates without modifying files
-  - `hardlink`: Replace duplicates with hardlinks
-  - `symlink`: Replace duplicates with symbolic links
-  - `delete`: Remove duplicate files
-
-#### Performance
-
-- `parallel_threshold`: Minimum file size for parallel processing
-- `max_threads`: Maximum number of threads for parallel operations
 
 ## Command Line Options
 
 ```
 USAGE:
-    dedupe [OPTIONS] <PATH>
+    dedupe [OPTIONS] [DIR]
 
 ARGS:
-    <PATH>    Directory to scan for duplicates
+    <DIR>    Directory to scan for duplicates [default: .]
 
 OPTIONS:
-    -c, --config <FILE>     Path to configuration file
-    -d, --depth <DEPTH>     Maximum directory depth to scan
-    -s, --size <SIZE>       Minimum file size to consider (in bytes)
-    -v, --verbose           Enable verbose output
-    -q, --quiet            Suppress progress bars
-    -h, --help             Print help information
-    -V, --version          Print version information
+    -d, --depth <DEPTH>        Maximum depth to traverse [default: unlimited]
+    -m, --min-size <MIN_SIZE>  Minimum file size to consider (in bytes) [default: 1024]
+    -p, --parallel             Use parallel pipeline processing (enabled by default)
+    -t, --threads <THREADS>    Number of worker threads (0 = auto-detect) [default: 0]
+    -v, --verbose              Enable verbose logging with debug information
+    -f, --format <FORMAT>      Report output format: text, json, csv [default: text]
+    -o, --output <OUTPUT>      Output file path (if not specified, output to console)
+    -h, --help                 Print help
+    -V, --version              Print version
+```
+
+## Report Formats
+
+### Text Format (Default)
+
+Human-readable report with emojis and clear formatting:
+
+```bash
+dedupe /path/to/directory
+```
+
+### JSON Format
+
+Structured data for programmatic processing:
+
+```bash
+dedupe --format json --output report.json /path/to/directory
+```
+
+### CSV Format
+
+Tabular data suitable for spreadsheets:
+
+```bash
+dedupe --format csv --output report.csv /path/to/directory
 ```
 
 ## Examples
 
-1. Find duplicates in your home directory, limiting to image files:
+### Basic Scanning
 
-```yaml
-# config.yaml
-include_types:
-  - "image/jpeg"
-  - "image/png"
-  - ".jpg"
-  - ".png"
-min_file_size: 10240 # 10KB
-```
+1. **Scan current directory with defaults:**
 
-```bash
-dedupe --config config.yaml ~/
-```
+   ```bash
+   dedupe
+   ```
 
-2. Clean up duplicate downloads, replacing them with hardlinks:
+2. **Scan with limited depth:**
 
-```yaml
-# config.yaml
-exclude_dirs:
-  - ".git"
-  - "node_modules"
-duplicate_action: "hardlink"
-```
+   ```bash
+   dedupe --depth 5 /home/user/documents
+   ```
 
-```bash
-dedupe --config config.yaml ~/Downloads
-```
+3. **Skip small files (< 10MB):**
+   ```bash
+   dedupe --min-size 10485760 /media/photos
+   ```
 
-3. Quick scan using metadata comparison:
+### Report Generation
 
-```yaml
-# config.yaml
-strategy: "metadata"
-min_file_size: 1048576 # 1MB
-```
+4. **Generate JSON report for automation:**
 
-```bash
-dedupe --config config.yaml /data
-```
+   ```bash
+   dedupe --format json --output duplicates.json ~/Downloads
+   ```
 
-## Exit Codes
+5. **CSV export for analysis:**
 
-- 0: Success
-- 1: General error
-- 2: Invalid configuration
-- 3: Permission error
-- 4: No duplicates found
+   ```bash
+   dedupe --format csv --output analysis.csv --verbose /data
+   ```
 
-## Notes
+6. **Compact scanning (no debug info):**
+   ```bash
+   dedupe --min-size 1048576 /large/dataset > report.txt
+   ```
 
-1. When using `delete` or `hardlink` actions, always run with `report` first to review what will be modified.
-2. The tool never modifies the original files when finding duplicates, only the duplicates.
-3. Symbolic links are not followed by default for safety.
-4. File modification times are preserved when creating hardlinks.
+### Performance Optimization
+
+7. **Use specific thread count:**
+
+   ```bash
+   dedupe --threads 8 /massive/directory
+   ```
+
+8. **Verbose mode for debugging:**
+   ```bash
+   dedupe --verbose --depth 2 /problematic/path
+   ```
+
+## Algorithm Details
+
+Dedupe uses a multi-stage pipeline for efficient duplicate detection:
+
+1. **Metadata Stage**: Quick file system metadata collection
+2. **QuickCheck Stage**: Fast preliminary content sampling (8KB samples)
+3. **Statistical Analysis**: Advanced similarity analysis using:
+   - Entropy calculation for content randomness
+   - SimHash fingerprinting for fuzzy matching
+   - Statistical fingerprints for content patterns
+4. **Hash Stage**: Full content hashing (BLAKE3) for exact matches
+
+## Performance Features
+
+- **Parallel Processing**: Multi-threaded pipeline with configurable worker threads
+- **Intelligent Defaults**: 1KB minimum file size, auto-detected CPU cores
+- **Fast Algorithms**: BLAKE3 hashing, statistical fingerprinting
+- **Memory Efficient**: Streaming file processing with batched operations
+- **Progress Tracking**: Real-time progress bars and throughput metrics
+
+## Output Information
+
+### Scan Statistics
+
+- Total files scanned and processing time
+- File size distribution and throughput metrics
+- Thread utilization and performance data
+
+### Duplicate Analysis
+
+- Number of duplicate groups and files
+- Potential storage savings
+- Space efficiency percentage
+
+### File Details
+
+- File paths, sizes, and modification dates
+- Content similarity percentages
+- Primary file recommendations (newest/largest)
 
 ## Performance Tips
 
-1. Use appropriate `min_file_size` to skip small files
-2. Enable parallel processing with `parallel_threshold`
-3. Use `max_depth` to limit directory traversal
-4. Choose `blake3` for fastest hashing
-5. Use `metadata` strategy for quick initial scans
+1. **Adjust minimum file size** to skip irrelevant small files:
+
+   ```bash
+   dedupe --min-size 10485760  # Skip files < 10MB
+   ```
+
+2. **Use appropriate depth limits** for large directory trees:
+
+   ```bash
+   dedupe --depth 10 /very/deep/structure
+   ```
+
+3. **Optimize thread count** for your system:
+
+   ```bash
+   dedupe --threads $(nproc) /path/to/scan
+   ```
+
+4. **Use release builds** for maximum performance:
+   ```bash
+   cargo run --release -- /path/to/directory
+   ```
 
 ## Safety Features
 
-- Read-only by default (report mode)
-- Preserves original files
-- Checks file permissions before modifications
-- Validates hardlink/symlink operations
-- Maintains file timestamps
-- Verifies file integrity after operations
+- **Read-only operation**: Never modifies or deletes files
+- **Non-intrusive scanning**: No temporary files or system changes
+- **Error resilience**: Continues processing despite individual file errors
+- **Progress reporting**: Clear feedback on scan progress and results
+- **Comprehensive logging**: Detailed operation logs with verbose mode
+
+## Exit Codes
+
+- **0**: Success - scan completed successfully
+- **1**: Error - invalid arguments, file system errors, or processing failures
+
+## Technical Specifications
+
+- **Minimum File Size**: 1KB (configurable)
+- **Hash Algorithm**: BLAKE3 (cryptographically secure)
+- **Similarity Threshold**: 95% (configurable in code)
+- **Default Threading**: Auto-detect CPU cores
+- **Memory Usage**: Optimized for large file sets with streaming processing
+- **Supported Platforms**: Windows, Linux, macOS (via Rust cross-compilation)

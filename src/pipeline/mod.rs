@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use crate::walker::FileInfo;
 
 mod metadata;
-mod quick_check;
-mod stats;
+pub mod quick_check;
+pub mod stats;
 mod hash;
 mod parallel;
 mod thread_pool;
