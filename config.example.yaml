@@ -1,0 +1,62 @@
+# Minimum file size to consider for deduplication (in bytes)
+# Default: 1024 (1KB)
+min_file_size: 1024
+
+# Maximum directory depth to scan
+# Default: no limit
+# Set to 1 to only scan the immediate directory
+max_depth: 5
+
+# File types to include in the scan
+# Default: all files
+# Specify mime types or extensions
+include_types:
+  - "image/jpeg"
+  - "image/png"
+  - "application/pdf"
+  - ".jpg"
+  - ".png"
+  - ".pdf"
+
+# File types to exclude from the scan
+# Default: none
+exclude_types:
+  - "application/x-executable"
+  - ".exe"
+  - ".dll"
+
+# Directories to exclude from scanning
+# Default: none
+exclude_dirs:
+  - "node_modules"
+  - ".git"
+  - "target"
+  - "dist"
+
+# Whether to follow symbolic links
+# Default: false
+follow_links: false
+
+# Deduplication strategy
+# Options: "hash" (compare file contents) or "metadata" (compare size and modification time)
+# Default: "hash"
+strategy: "hash"
+
+# Hash algorithm to use for content comparison
+# Options: "sha256", "sha1", "blake3"
+# Default: "blake3"
+hash_algorithm: "blake3"
+
+# Action to take when duplicates are found
+# Options: "report" (just list), "hardlink" (replace with hardlinks), "symlink" (replace with symlinks), "delete" (remove duplicates)
+# Default: "report"
+duplicate_action: "report"
+
+# Minimum file size (in bytes) to use parallel processing
+# Files smaller than this will be processed sequentially
+# Default: 1048576 (1MB)
+parallel_threshold: 1048576
+
+# Maximum number of threads to use for parallel processing
+# Default: number of CPU cores
+max_threads: 8
