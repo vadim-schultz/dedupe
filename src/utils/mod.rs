@@ -1,5 +1,6 @@
-mod error;
-mod progress;
+pub mod error;
+pub mod progress;
 
-pub use error::{Error, Result};
-pub use progress::ProgressTracker;
+// These types will be used throughout the application
+pub(crate) use error::{Error, Result};
+pub(crate) use progress::ProgressTracker;

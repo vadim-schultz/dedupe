@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use clap::Parser;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -6,6 +7,13 @@ mod config;
 mod walker;
 mod pipeline;
 mod utils;
+
+use crate::{
+    config::Config,
+    walker::Walker,
+    pipeline::{MetadataStage, QuickCheckStage, StatisticalStage, HashStage},
+    utils::progress::ProgressTracker,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,7 +46,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Maximum depth: {}", args.depth);
     info!("Minimum file size: {} bytes", args.min_size);
 
-    // TODO: Initialize pipeline and start processing
+    // Create configuration
+    let config = Arc::new(Config {
+        max_depth: Some(args.depth as usize),
+        min_file_size: args.min_size,
+        threads_per_stage: num_cpus::get(),
+        quick_check_sample_size: 4096,
+        similarity_threshold: 95,
+        mode: config::OperationMode::Report,
+        ..Config::default()
+    });
+
+    // Initialize components
+    let walker = Walker::new(config.clone());
+    let _progress = ProgressTracker::new();
+
+    // Initialize pipeline stages
+    let _stages: Vec<Box<dyn pipeline::PipelineStage>> = vec![
+        Box::new(MetadataStage::new(config.min_file_size)),
+        Box::new(QuickCheckStage::new(config.quick_check_sample_size)),
+        Box::new(StatisticalStage::new(config.similarity_threshold)),
+        Box::new(HashStage::new()),
+    ];
+
+    info!("Scanning directory for files...");
+    let files = walker.walk(&args.dir)?;
+    info!("Found {} files to process", files.len());
     
     Ok(())
 }

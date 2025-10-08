@@ -12,7 +12,11 @@ mod quick_check;
 mod stats;
 mod hash;
 
-pub use metadata::MetadataStage;
-pub use quick_check::QuickCheckStage;
-pub use stats::StatisticalStage;
-pub use hash::HashStage;
+// These will be used when implementing the pipeline execution
+#[allow(unused_imports)]
+pub use {
+    metadata::MetadataStage,
+    quick_check::QuickCheckStage,
+    stats::StatisticalStage,
+    hash::HashStage,
+};
