@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
-use indexmap::IndexMap;
 use std::sync::Arc;
 use crate::config::Config;
 use super::{PipelineStage, ProcessingResult};
@@ -26,54 +24,69 @@ impl PipelineStage for MetadataStage {
     }
 
     async fn process_impl(&self, files: Vec<FileInfo>) -> Result<ProcessingResult> {
-        // Group files by size first - this is O(n) operation
-        let mut size_groups: IndexMap<u64, Vec<FileInfo>> = IndexMap::new();
-        let total_files = files.len();
-        
+        if files.is_empty() {
+            return Ok(ProcessingResult::Skip(Vec::new()));
+        }
+
+        // First filter by min size
+        let mut valid_files = Vec::new();
         for file in files {
             if file.size >= self.config.min_file_size {
-                size_groups.entry(file.size)
-                    .or_default()
+                valid_files.push(file);
+            }
+        }
+
+        if valid_files.is_empty() {
+            return Ok(ProcessingResult::Skip(Vec::new()));
+        }
+
+        // Group by size
+        let mut size_groups = std::collections::HashMap::new();
+        for file in valid_files {
+            size_groups.entry(file.size)
+                .or_insert_with(Vec::new)
+                .push(file);
+        }
+
+        // Collect duplicate-size files and unique files
+        let mut to_continue = Vec::new();
+        let mut unique_files = Vec::new();
+
+        for (_size, group) in size_groups {
+            if group.len() > 1 {
+                // Multiple files of same size go to next stage
+                to_continue.extend(group);
+            } else {
+                // Single files can be skipped
+                unique_files.extend(group);
+            }
+        }
+
+        if !to_continue.is_empty() {
+            // We have potential duplicates - create groups for duplicates and individuals for unique files
+            let mut result_groups = Vec::new();
+            
+            // Group the potential duplicates by size
+            let mut dup_groups = std::collections::HashMap::new();
+            for file in to_continue {
+                dup_groups.entry(file.size)
+                    .or_insert_with(Vec::new)
                     .push(file);
             }
-        }
-        
-        // Filter out groups with only one file - these can't be duplicates
-        let mut unique_files = Vec::new();
-        let mut potential_duplicates = Vec::new();
-        
-        for (_size, group) in size_groups {
-            if group.len() == 1 {
-                unique_files.extend(group);
-            } else {
-                // Further group by file type if available
-                let mut type_groups: HashMap<Option<String>, Vec<FileInfo>> = HashMap::new();
-                for file in group {
-                    type_groups.entry(file.file_type.clone())
-                        .or_default()
-                        .push(file);
-                }
-                
-                // Only keep groups with multiple files
-                for (_type, type_group) in type_groups {
-                    if type_group.len() > 1 {
-                        potential_duplicates.push(type_group);
-                    } else {
-                        unique_files.extend(type_group);
-                    }
-                }
+            
+            // Add duplicate groups
+            for (_size, group) in dup_groups {
+                result_groups.push(group);
             }
-        }
-        
-        if potential_duplicates.is_empty() {
-            Ok(ProcessingResult::Skip(unique_files))
-        } else if potential_duplicates.len() == 1 && potential_duplicates[0].len() == total_files {
-            // If all files are in a single group, they might all be duplicates
-            Ok(ProcessingResult::Duplicates(potential_duplicates))
+            
+            // Add unique files as individual groups
+            for file in unique_files {
+                result_groups.push(vec![file]);
+            }
+            
+            Ok(ProcessingResult::Duplicates(result_groups))
         } else {
-            Ok(ProcessingResult::Continue(
-                potential_duplicates.into_iter().flatten().collect()
-            ))
+            Ok(ProcessingResult::Skip(unique_files))
         }
     }
 }

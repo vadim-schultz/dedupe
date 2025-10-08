@@ -26,6 +26,9 @@ rstest = "0.18"
 
 indexmap = "2.11.4"
 blake3 = "1.8.2"
+bytesize = "2.1.0"
+smallvec = "1.15.1"
+futures = "0.3.31"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

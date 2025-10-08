@@ -57,27 +57,56 @@ impl Pipeline {
     }
 
     pub async fn execute(&self, files: Vec<FileInfo>) -> Result<Vec<Vec<FileInfo>>> {
-        let mut current_files = files;
-        let mut duplicate_groups = Vec::new();
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut remaining = Some(files);
+        let mut all_processed = Vec::new();
+        let mut final_groups = Vec::new();
 
         // Process through each stage
         for stage in &self.stages {
-            match stage.process(current_files).await? {
+            let to_process = match remaining.take() {
+                Some(files) => files,
+                None => break,
+            };
+
+            match stage.process(to_process).await? {
                 ProcessingResult::Continue(files) => {
-                    current_files = files;
+                    // Keep track of which files make it through
+                    remaining = Some(files);
                 }
                 ProcessingResult::Skip(files) => {
-                    // Add each file as its own group (they're unique)
-                    duplicate_groups.extend(files.into_iter().map(|f| vec![f]));
-                    break;
+                    // Save these for final grouping
+                    all_processed.extend(files);
                 }
                 ProcessingResult::Duplicates(groups) => {
-                    duplicate_groups.extend(groups);
+                    final_groups.extend(groups);
                     break;
                 }
             }
         }
 
-        Ok(duplicate_groups)
+        // Handle remaining files from Continue results - group by size
+        if let Some(files) = remaining {
+            let mut size_groups = std::collections::HashMap::new();
+            for file in files {
+                size_groups.entry(file.size)
+                    .or_insert_with(Vec::new)
+                    .push(file);
+            }
+            
+            for (_size, group) in size_groups {
+                final_groups.push(group);
+            }
+        }
+
+        // Add processed files as individual groups (from Skip results)
+        for file in all_processed {
+            final_groups.push(vec![file]);
+        }
+
+        Ok(final_groups)
     }
 }

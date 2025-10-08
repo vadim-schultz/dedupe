@@ -190,6 +190,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
+name = "bytesize"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5c434ae3cf0089ca203e9019ebe529c47ff45cefe8af7c85ecb734ef541822f"
+
+[[package]]
 name = "camino"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -332,10 +338,12 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
+ "bytesize",
  "camino",
  "clap",
  "config",
  "fs_extra",
+ "futures",
  "indexmap",
  "indicatif",
  "infer",
@@ -344,6 +352,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_yaml",
+ "smallvec",
  "tempfile",
  "test-case",
  "thiserror",

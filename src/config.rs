@@ -32,7 +32,7 @@ pub struct Config {
     pub mode: OperationMode,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum OperationMode {
     Report,
@@ -74,7 +74,7 @@ impl Config {
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), Error> {
         if self.similarity_threshold > 100 {
             return Err(Error::Validation(
                 "similarity_threshold must be between 0 and 100".to_string(),
