@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use anyhow::{Result, Context};
 use rayon::{ThreadPool, ThreadPoolBuilder, prelude::*};
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 
 /// Work item that can be processed by worker threads
 #[derive(Debug, Clone)]
@@ -138,7 +138,7 @@ impl ThreadPoolManager {
         })?;
 
         self.tasks_completed.fetch_add(results.len(), Ordering::Relaxed);
-        info!("Completed {} tasks", results.len());
+        debug!("Completed {} tasks", results.len());
 
         Ok(results)
     }
@@ -172,7 +172,7 @@ impl ThreadPoolManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::walker::FileInfo;
+    use crate::types::FileInfo;
     use camino::Utf8PathBuf;
     use std::time::SystemTime;
 

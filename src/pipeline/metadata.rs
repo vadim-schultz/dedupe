@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use crate::config::Config;
 use super::{PipelineStage, ProcessingResult};
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 
 /// First pipeline stage that groups files by size and performs basic metadata checks
 #[derive(Debug)]

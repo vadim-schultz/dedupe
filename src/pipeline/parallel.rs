@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use rayon::ThreadPoolBuilder;
 use tracing::{debug, error, info, instrument};
 
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 use super::{PipelineStage, ProcessingResult};
 
 /// Configuration for the parallel pipeline
@@ -108,6 +108,7 @@ pub struct ParallelPipeline {
     config: ParallelConfig,
     metrics: Arc<PipelineMetrics>,
     thread_pool: Arc<rayon::ThreadPool>,
+    progress_tracker: Option<Arc<crate::utils::ProgressTracker>>,
 }
 
 impl ParallelPipeline {
@@ -128,12 +129,18 @@ impl ParallelPipeline {
             config,
             metrics,
             thread_pool,
+            progress_tracker: None,
         })
     }
 
     /// Add a stage to the pipeline
     pub fn add_stage<S: PipelineStage + 'static>(&mut self, stage: S) {
         self.stages.push(Arc::new(stage));
+    }
+
+    /// Set the progress tracker for visual feedback
+    pub fn set_progress_tracker(&mut self, tracker: Arc<crate::utils::ProgressTracker>) {
+        self.progress_tracker = Some(tracker);
     }
 
     /// Execute the pipeline with parallel processing
@@ -143,7 +150,7 @@ impl ParallelPipeline {
             return Ok(Vec::new());
         }
 
-        info!("Starting parallel pipeline execution with {} files", files.len());
+        debug!("Starting parallel pipeline execution with {} files", files.len());
         let start_time = Instant::now();
         let input_file_count = files.len();
 
@@ -164,6 +171,12 @@ impl ParallelPipeline {
         for (stage_idx, stage) in self.stages.iter().enumerate() {
             debug!("Processing stage {}: {}", stage_idx, stage.name());
             
+            // Create progress bars for this stage if tracker is available
+            if let Some(tracker) = &self.progress_tracker {
+                let thread_count = self.config.threads_per_stage.min(current_files.len().max(1));
+                tracker.create_stage_bars(stage.name(), thread_count, current_files.len() as u64);
+            }
+            
             current_files = self.process_stage_parallel(
                 stage.clone(),
                 current_files,
@@ -171,6 +184,11 @@ impl ParallelPipeline {
                 &semaphore,
                 &monitor,
             ).await?;
+            
+            // Finish progress bars for this stage
+            if let Some(tracker) = &self.progress_tracker {
+                tracker.finish_stage(stage.name());
+            }
             
             // If no files remain, break early
             if current_files.is_empty() {
@@ -227,23 +245,45 @@ impl ParallelPipeline {
 
         debug!("Processing {} batches for stage {}", batches.len(), stage_index);
 
+        // Get progress bars for this stage
+        let stage_bars = if let Some(tracker) = &self.progress_tracker {
+            tracker.get_stage_bars(stage.name())
+        } else {
+            None
+        };
+
         // Create tasks for parallel processing
         let mut tasks: Vec<JoinHandle<Result<ProcessingResult>>> = Vec::new();
         
-        for batch in batches {
+        for (batch_idx, batch) in batches.into_iter().enumerate() {
             let stage_clone = stage.clone();
             let semaphore_clone = semaphore.clone();
             let metrics_clone = self.metrics.clone();
+            let progress_bar = stage_bars.as_ref().and_then(|bars| {
+                bars.get(batch_idx % bars.len()).cloned()
+            });
             
             let task = tokio::spawn(monitor.instrument(async move {
                 let _permit = semaphore_clone.acquire().await
                     .context("Failed to acquire semaphore permit")?;
                 
                 let start = Instant::now();
+                let batch_size = batch.len();
+                
+                // Update progress bar before processing
+                if let Some(pb) = &progress_bar {
+                    pb.set_message(format!("Processing {} files", batch_size));
+                }
+                
                 let result = stage_clone.process(batch.clone()).await;
                 let elapsed = start.elapsed();
                 
                 metrics_clone.record_processing_time(elapsed);
+                
+                // Update progress bar after processing
+                if let Some(pb) = &progress_bar {
+                    pb.inc(batch_size as u64);
+                }
                 
                 result
             }));

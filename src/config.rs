@@ -30,6 +30,12 @@ pub struct Config {
 
     /// Operation mode (report, remove, interactive)
     pub mode: OperationMode,
+    
+    /// Enable parallel scanning
+    pub parallel_scan: bool,
+    
+    /// File extensions to include (empty means all)
+    pub extensions: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -49,6 +55,8 @@ impl Default for Config {
             quick_check_sample_size: 8192, // 8KB sample for better accuracy
             similarity_threshold: 95,
             mode: OperationMode::Report,
+            parallel_scan: false,
+            extensions: Vec::new(), // Empty means include all extensions
         }
     }
 }

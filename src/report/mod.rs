@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 
 pub mod formatters;
 

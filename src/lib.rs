@@ -1,5 +1,7 @@
 mod config;
+pub mod types;
 pub mod walker;
+pub mod walker_simple;
 pub mod pipeline;
 pub mod report;
 pub mod utils;
@@ -8,4 +10,6 @@ pub mod utils;
 pub mod test_utils;
 
 pub use config::{Config, OperationMode};
-pub use walker::{Walker, FileInfo};
+pub use types::FileInfo;
+pub use walker::Walker;
+pub use walker_simple::SimpleWalker;

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use blake3::Hasher;
 use tokio::task;
 use super::{PipelineStage, ProcessingResult};
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 
 /// Final stage that performs full file hashing for exact duplicate detection
 #[derive(Debug)]

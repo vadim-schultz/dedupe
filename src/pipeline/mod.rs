@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 use anyhow::Result;
 use async_trait::async_trait;
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 
-mod metadata;
+pub mod metadata;
 pub mod quick_check;
 pub mod stats;
-mod hash;
-mod parallel;
-mod thread_pool;
+pub mod hash;
+pub mod parallel;
+pub mod thread_pool;
 
 pub use {
     metadata::MetadataStage,

@@ -14,9 +14,9 @@ use anyhow::{Context, Result};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use rayon::prelude::*;
-use tracing::{info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
-use crate::walker::FileInfo;
+use crate::types::FileInfo;
 use crate::config::Config;
 use super::{PipelineStage, ProcessingResult};
 
@@ -273,7 +273,7 @@ impl PipelineStage for StatisticalStage {
     #[instrument(skip(self, files))]
     async fn process_impl(&self, files: Vec<FileInfo>) -> Result<ProcessingResult> {
         let start_time = Instant::now();
-        info!("Processing {} files in Statistical Analysis stage", files.len());
+        debug!("Processing {} files in Statistical Analysis stage", files.len());
 
         // Generate fingerprints for all files
         let mut fingerprints = Vec::new();
@@ -326,7 +326,7 @@ impl PipelineStage for StatisticalStage {
         }
 
         let duration = start_time.elapsed();
-        info!("Statistical Analysis completed: {} processed, {} errors, {} groups in {:?}", 
+        debug!("Statistical Analysis completed: {} processed, {} errors, {} groups in {:?}", 
               processed_count, error_count, groups.len(), duration);
 
         // Separate groups with multiple files (potential duplicates) from singles
