@@ -3,8 +3,8 @@
 use std::time::{Duration, SystemTime};
 use anyhow::Result;
 
-use dedupe::report::{DeduplicationReport, DeduplicationStats, ScanConfig, DuplicateGroup, FileEntry};
-use dedupe::walker::FileInfo;
+use dedupe::report::{DeduplicationReport, DeduplicationStats, ScanConfig};
+use dedupe::types::FileInfo;
 
 fn create_test_file_info(path: &str, size: u64) -> FileInfo {
     FileInfo {
@@ -16,6 +16,9 @@ fn create_test_file_info(path: &str, size: u64) -> FileInfo {
         readonly: false,
         hidden: false,
         checksum: None,
+        metadata: None,
+        quick_check: None,
+        statistical_info: None,
     }
 }
 

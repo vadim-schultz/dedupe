@@ -15,11 +15,12 @@ use std::io::Write;
 use anyhow::Result;
 use tempfile::tempdir;
 
-use dedupe::{Config, FileInfo};
+use dedupe::Config;
+use dedupe::types::{FileInfo, QuickCheckInfo, StatisticalInfo};
 use dedupe::pipeline::{
-    QuickCheckStage, StatisticalStage, PipelineStage,
-    quick_check::{QuickCheckConfig, ContentSample, ContentStructure},
-    stats::{StatisticalConfig, StatisticalFingerprint},
+    PipelineStage,
+    quick_check::{QuickCheckStage, QuickCheckConfig, ContentSample, ContentStructure},
+    stats::{StatisticalStage, StatisticalConfig, StatisticalFingerprint},
 };
 
 fn create_test_file(dir: &std::path::Path, name: &str, content: &[u8]) -> Result<FileInfo> {
@@ -37,6 +38,9 @@ fn create_test_file(dir: &std::path::Path, name: &str, content: &[u8]) -> Result
         readonly: metadata.permissions().readonly(),
         hidden: false,
         checksum: None,
+        metadata: None,
+        quick_check: None,
+        statistical_info: None,
     })
 }
 

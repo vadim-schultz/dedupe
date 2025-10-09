@@ -362,7 +362,7 @@ impl std::fmt::Debug for ParallelPipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{MetadataStage, QuickCheckStage, StatisticalStage, HashStage};
+    use crate::pipeline::{metadata::MetadataStage, quick_check::QuickCheckStage, stats::StatisticalStage, hash::HashStage};
     use crate::Config;
     use tempfile::tempdir;
     use std::fs::File;
@@ -386,6 +386,9 @@ mod tests {
             readonly: false,
             hidden: false,
             checksum: None,
+            quick_check: None,
+            statistical_info: None,
+            metadata: None,
         })
     }
 

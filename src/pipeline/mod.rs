@@ -9,14 +9,18 @@ pub mod stats;
 pub mod hash;
 pub mod parallel;
 pub mod thread_pool;
+pub mod streaming;
+pub mod streaming_metadata;
+pub mod streaming_quickcheck;
+pub mod streaming_statistical;
+pub mod streaming_hash;
 
 pub use {
-    metadata::MetadataStage,
-    quick_check::QuickCheckStage,
-    stats::StatisticalStage,
-    hash::HashStage,
-    parallel::{ParallelPipeline, ParallelConfig, PipelineMetrics, MetricsSnapshot},
-    thread_pool::{ThreadPoolManager, ThreadPoolConfig, WorkUnit, WorkPriority, WorkerStats},
+    streaming::{StreamingPipeline, StreamingPipelineConfig},
+    streaming_metadata::StreamingMetadataStage,
+    streaming_quickcheck::StreamingQuickCheckStage,
+    streaming_statistical::StreamingStatisticalStage,
+    streaming_hash::StreamingHashStage,
 };
 
 /// Represents the processing result for a file or group of files

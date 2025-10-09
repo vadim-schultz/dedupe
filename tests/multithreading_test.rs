@@ -16,10 +16,15 @@ use tempfile::tempdir;
 use camino::Utf8PathBuf;
 
 use dedupe::pipeline::{
-    ParallelPipeline, ParallelConfig, MetadataStage, QuickCheckStage, StatisticalStage, HashStage,
-    ThreadPoolManager, ThreadPoolConfig, WorkPriority
+    parallel::{ParallelPipeline, ParallelConfig},
+    metadata::MetadataStage,
+    quick_check::QuickCheckStage, 
+    stats::StatisticalStage,
+    hash::HashStage,
+    thread_pool::{ThreadPoolManager, ThreadPoolConfig, WorkPriority}
 };
-use dedupe::{Config, FileInfo};
+use dedupe::types::{FileInfo, QuickCheckInfo, StatisticalInfo};
+use dedupe::Config;
 
 fn create_test_file(dir: &std::path::Path, name: &str, content: &[u8]) -> Result<FileInfo> {
     let file_path = dir.join(name);
@@ -38,6 +43,9 @@ fn create_test_file(dir: &std::path::Path, name: &str, content: &[u8]) -> Result
         readonly: false,
         hidden: false,
         checksum: None,
+        metadata: None,
+        quick_check: None,
+        statistical_info: None,
     })
 }
 
@@ -165,6 +173,9 @@ async fn test_thread_pool_work_stealing() -> Result<()> {
             readonly: false,
             hidden: false,
             checksum: None,
+            metadata: None,
+            quick_check: None,
+            statistical_info: None,
         }).collect()
     }).collect();
 

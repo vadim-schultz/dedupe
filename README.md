@@ -1,17 +1,18 @@
-# Dedupe - Fast File Deduplication Tool
+# Dedupe - High-Performance Streaming File Deduplication Tool
 
-A high-performance file deduplication tool written in Rust that uses a multi-stage pipeline approach to efficiently identify and handle duplicate files.
+A revolutionary high-performance file deduplication tool written in Rust featuring always-streaming, always-parallel architecture that processes files in real-time as they're discovered during directory scanning.
 
 ## Design Overview
 
 ### Core Features
 
-- Multi-stage pipeline for efficient duplicate detection
-- Configurable directory traversal depth
-- Concurrent processing using Rust channels
-- Multiple operation modes (report/remove/interactive)
-- Similarity detection for near-duplicate files
-- Progress tracking and statistics
+- **Always-Streaming Architecture**: Files processed in real-time as discovered
+- **Always-Parallel Processing**: Multi-worker concurrent directory scanning by default
+- **High-Performance Walker**: Configurable performance modes (Standard/High/Ultra)
+- **Zero Wait Time**: Processing begins immediately, no scan completion delay
+- **Advanced Pipeline**: Multi-stage duplicate detection with statistical analysis
+- **Constant Memory**: Memory usage independent of directory size
+- **Real-time Progress**: Live progress tracking and throughput metrics
 
 ### Pipeline Stages
 
@@ -45,22 +46,28 @@ The application uses a pipeline of increasingly precise (and computationally exp
    - Guarantees exact matches
    - Only performed on likely duplicates
 
-### Architecture
+### Streaming Architecture
 
 ```
-[Directory Walker] ---> [Stage 1 Filter] ---> [Stage 2 Filter] ---> [Stage 3 Filter] ---> [Stage 4 Filter]
-     |                      |                      |                      |                      |
-     v                      v                      v                      v                      v
-[Progress Bar]         [Statistics]           [Statistics]           [Statistics]           [Results]
+[High-Performance Walker] ──┬──> [Streaming Metadata Stage]
+     (Multi-Worker)         │         ↓
+                           │    [Streaming QuickCheck Stage]
+                           │         ↓
+                           │    [Streaming Statistical Stage]
+                           │         ↓
+                           └──> [Streaming Hash Stage] ──> [Duplicate Groups]
+
+    ✨ Files processed in real-time as discovered ✨
 ```
 
-### Concurrency Model
+### High-Performance Concurrency Model
 
-- Each stage runs in its own thread pool
-- Rust channels connect stages
-- Bounded channel capacity for backpressure
-- Work stealing for load balancing
-- Pipeline parallelism for maximum throughput
+- **Always-Streaming**: Real-time processing as files discovered (zero wait time)
+- **Always-Parallel**: Multi-worker concurrent directory scanning by default
+- **Performance Modes**: Standard (2 workers), High (4 workers), Ultra (8 workers)
+- **Async Channels**: Tokio-based streaming pipeline with backpressure handling
+- **Concurrent Stages**: Each processing stage runs concurrently
+- **Maximum Throughput**: Continuous pipeline processing without blocking
 
 ### Configuration Options
 

@@ -410,6 +410,9 @@ mod tests {
             readonly: metadata.permissions().readonly(),
             hidden: false,
             checksum: None,
+            quick_check: None,
+            statistical_info: None,
+            metadata: None,
         })
     }
 

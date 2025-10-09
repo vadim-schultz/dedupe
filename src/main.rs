@@ -5,16 +5,16 @@ use tracing_subscriber::FmtSubscriber;
 
 mod config;
 mod types;
-mod walker_simple;
+mod walker_hp; // High-performance walker
 mod pipeline;
 mod utils;
 mod report;
 
 use crate::{
     config::Config,
+    types::FileInfo,
     report::{DeduplicationReport, ScanConfig},
-
-    walker_simple::SimpleWalker,
+    walker_hp::{HighPerformanceWalker, HighPerformanceConfig},
     utils::{
         progress::ProgressTracker,
     },
@@ -35,19 +35,15 @@ struct Args {
     #[arg(short, long, default_value_t = 1024)]
     min_size: u64,
 
-    /// Use parallel pipeline processing (enabled by default)
-    #[arg(short, long, default_value_t = true)]
-    parallel: bool,
+    /// Performance mode: standard, high, ultra
+    #[arg(short = 'p', long, default_value = "high")]
+    performance: String,
 
-    /// Use parallel scanning (faster for large directories)
-    #[arg(long, default_value_t = false)]
-    parallel_scan: bool,
-
-    /// Number of worker threads for parallel processing (0 = auto-detect)
+    /// Number of worker threads (0 = auto-detect optimal count)
     #[arg(short, long, default_value_t = 0)]
     threads: usize,
 
-    /// Enable verbose logging
+    /// Enable verbose logging and detailed statistics
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
 
@@ -74,28 +70,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false) // Remove target info like "at src\main.rs:125"
         .init();
 
-    println!("🚀 Starting file deduplication scan");
+    println!("🚀 Starting high-performance file deduplication scan");
     println!("📁 Directory: {}", args.dir);
     
-    let thread_count = if args.threads > 0 { args.threads } else { num_cpus::get() };
+    // Determine optimal thread count based on performance mode
+    let thread_count = if args.threads > 0 { 
+        args.threads 
+    } else {
+        match args.performance.as_str() {
+            "ultra" => (num_cpus::get() * 4).max(8),
+            "high" => (num_cpus::get() * 2).max(4),
+            _ => num_cpus::get(),
+        }
+    };
+    
+    // Configure high-performance settings
+    let hp_config = match args.performance.as_str() {
+        "ultra" => HighPerformanceConfig::ultra_performance(),
+        "high" => HighPerformanceConfig::default(),
+        _ => HighPerformanceConfig {
+            scanner_workers: thread_count,
+            ..HighPerformanceConfig::default()
+        },
+    };
     
     if args.verbose {
         println!("📏 Maximum depth: {}", args.depth);
         println!("📐 Minimum file size: {} bytes", args.min_size);
-        println!("⚙️  Parallel processing: {}", args.parallel);
-        println!("🔍 Parallel scanning: {}", args.parallel_scan);
+        println!("⚡ Performance mode: {} (always streaming + parallel)", args.performance);
         println!("🧵 Worker threads: {}", thread_count);
+        println!("🔍 Scanner workers: {}", hp_config.scanner_workers);
+        println!("📦 Batch size: {}", hp_config.output_batch_size);
     }
 
-    // Create configuration
+    // Create high-performance configuration
     let config = Arc::new(Config {
         max_depth: Some(args.depth as usize),
         min_file_size: args.min_size,
         threads_per_stage: thread_count,
-        quick_check_sample_size: 4096,
+        quick_check_sample_size: match args.performance.as_str() {
+            "ultra" => 8192,
+            "high" => 4096,
+            _ => 2048,
+        },
         similarity_threshold: 95,
         mode: config::OperationMode::Report,
-        parallel_scan: args.parallel_scan,
+        parallel_scan: true, // Always use parallel scanning for performance
         extensions: Vec::new(), // Include all file types by default
         ..Config::default()
     });
@@ -103,107 +123,180 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create progress tracker for visual feedback
     let progress_tracker = Arc::new(ProgressTracker::new());
     
-    println!("🔍 Scanning files...");
-    let walker = SimpleWalker::new(config.clone(), progress_tracker.clone());
-    let scan_result = walker.walk(&[std::path::Path::new(&args.dir)]).await?;
+    // Always use high-performance streaming pipeline
+    println!("🌊 Starting high-performance streaming scan and processing...");
     
+    let start_time = std::time::Instant::now();
+    
+    // Create high-performance streaming walker
+    let hp_walker = HighPerformanceWalker::new(
+        config.clone(),
+        progress_tracker.clone(),
+        Some(hp_config),
+    );
+    
+    // Create streaming pipeline configuration
+    use crate::pipeline::streaming::{StreamingPipeline, StreamingPipelineConfig};
+    
+    let streaming_config = StreamingPipelineConfig {
+        channel_capacity: match args.performance.as_str() {
+            "ultra" => 100_000,
+            "high" => 50_000,
+            _ => 20_000,
+        },
+        batch_size: match args.performance.as_str() {
+            "ultra" => 1000,
+            "high" => 500,
+            _ => 200,
+        },
+        flush_interval: match args.performance.as_str() {
+            "ultra" => std::time::Duration::from_millis(10),
+            "high" => std::time::Duration::from_millis(25),
+            _ => std::time::Duration::from_millis(50),
+        },
+        max_concurrent_files: thread_count * 4,
+        thread_count,
+    };
+    
+    // Create and configure streaming pipeline with stages
+    // Create file stream channel using the config
+    let channel_capacity = streaming_config.channel_capacity;
+    let scan_dir = args.dir.clone(); // Clone for use in async closure
+    
+    let mut streaming_pipeline = StreamingPipeline::new(streaming_config);
+    streaming_pipeline.set_progress_tracker(progress_tracker.clone());
+    
+    // Add streaming pipeline stages
+    use crate::pipeline::{
+        streaming_metadata::StreamingMetadataStage,
+        streaming_quickcheck::StreamingQuickCheckStage,
+        streaming_statistical::StreamingStatisticalStage,
+        streaming_hash::StreamingHashStage,
+    };
+    
+    streaming_pipeline.add_stage(StreamingMetadataStage::new(config.clone()));
+    streaming_pipeline.add_stage(StreamingQuickCheckStage::new(config.clone()));
+    streaming_pipeline.add_stage(StreamingStatisticalStage::new(config.clone()));
+    streaming_pipeline.add_stage(StreamingHashStage::new(config.clone()));
+    
+    // Create file stream channel
+    let (file_tx, file_rx) = tokio::sync::mpsc::channel(channel_capacity);
+    
+    // Start file discovery in parallel
+    let discovery_handle = tokio::spawn({
+        let hp_walker = hp_walker;
+        let file_tx = file_tx.clone();
+        async move {
+            hp_walker.stream_files(&[std::path::Path::new(&scan_dir)], file_tx).await
+        }
+    });
+    
+    // Close the sender and start streaming pipeline
+    drop(file_tx);
+    
+    let (pipeline_result, discovery_result) = tokio::join!(
+        streaming_pipeline.start_streaming(file_rx),
+        discovery_handle
+    );
+    
+    let scan_stats = match discovery_result {
+        Ok(Ok(stats)) => stats,
+        Ok(Err(e)) => {
+            eprintln!("Discovery error: {}", e);
+            return Err(e.into());
+        }
+        Err(e) => {
+            eprintln!("Discovery task error: {}", e);
+            return Err(e.into());
+        }
+    };
+    
+    let all_duplicate_groups = match pipeline_result {
+        Ok(groups) => groups,
+        Err(e) => {
+            eprintln!("Pipeline error: {}", e);
+            return Err(e.into());
+        }
+    };
+    
+    let execution_time = start_time.elapsed();
+    let total_files_found = scan_stats.files_discovered;
+    
+    // Print performance statistics if verbose
     if args.verbose {
-        println!("📊 Scan Statistics:");
-        println!("   ├─ Directories processed: {}", scan_result.stats.directories_processed);
-        println!("   ├─ Files scanned: {}", scan_result.stats.files_scanned);
-        println!("   ├─ Errors encountered: {}", scan_result.stats.errors);
-        println!("   └─ Scan duration: {:.2}s", scan_result.stats.total_duration.as_secs_f64());
+        println!("\n⚡ High-Performance Scan Statistics:");
+        println!("   ├─ Files discovered: {}", scan_stats.files_discovered);
+        println!("   ├─ Directories processed: {}", scan_stats.directories_processed);
+        println!("   ├─ Files sent to pipeline: {}", scan_stats.files_sent_to_pipeline);
+        println!("   ├─ Total size: {} MB", scan_stats.total_size_bytes / 1024 / 1024);
+        println!("   ├─ Scan duration: {:.3}s", execution_time.as_secs_f64());
+        
+        if scan_stats.errors_encountered > 0 {
+            println!("   └─ ⚠️  {} errors encountered", scan_stats.errors_encountered);
+        } else {
+            println!("   └─ ✅ No errors");
+        }
+        
+        if execution_time.as_secs_f64() > 0.0 {
+            let discovery_rate = scan_stats.files_discovered as f64 / execution_time.as_secs_f64();
+            println!("🚀 Performance: {:.0} files/sec discovery + processing rate", discovery_rate);
+        }
     }
     
-    let files = scan_result.files;
-    println!("✅ Found {} files", files.len());
-    
-    let total_files_found = files.len();
+    // Ensure all progress bars are finished
+    progress_tracker.finish_all();
     
     if total_files_found == 0 {
-        println!("✅ No files found to analyze.");
-        progress_tracker.finish_all();
-    } else {
-        // Use the sophisticated pipeline with multiple stages and progress bars
-        let start_time = std::time::Instant::now();
-        println!("🔄 Analyzing files for duplicates...");
-        
-        // Import pipeline components
-        use crate::pipeline::{
-            ParallelPipeline, ParallelConfig,
-            metadata::MetadataStage,
-            quick_check::QuickCheckStage,
-            stats::StatisticalStage,
-            hash::HashStage,
-        };
-        
-        // Create parallel pipeline with progress tracking
-        let pipeline_config = ParallelConfig {
-            threads_per_stage: thread_count,
-            channel_capacity: 1000,
-            batch_size: 50,
-            max_concurrent_tasks: thread_count * 2,
-            metrics_interval: std::time::Duration::from_secs(1),
-        };
-        
-        let mut pipeline = ParallelPipeline::new(pipeline_config)?;
-        pipeline.set_progress_tracker(progress_tracker.clone());
-        
-        // Add pipeline stages with progress bars
-        pipeline.add_stage(MetadataStage::new(config.clone()));
-        pipeline.add_stage(QuickCheckStage::new(config.clone()));
-        pipeline.add_stage(StatisticalStage::new(config.clone()));
-        pipeline.add_stage(HashStage::new(None));
-        
-        // Execute pipeline with full progress visualization
-        let duplicate_groups = pipeline.execute(files).await?;
-        let execution_time = start_time.elapsed();
-        
-        // Ensure all progress bars are finished and cleaned up
-        progress_tracker.finish_all();
-        
-        // Generate and display report
-        let scan_config = ScanConfig {
-            directory: args.dir.clone(),
-            max_depth: if args.depth == std::u32::MAX { None } else { Some(args.depth as usize) },
-            min_file_size: args.min_size,
-            similarity_threshold: config.similarity_threshold,
-            parallel_processing: args.parallel,
-            thread_count,
-        };
+        return Ok(());
+    }
+    
+    // Generate and display report
+    let scan_config = ScanConfig {
+        directory: args.dir.clone(),
+        max_depth: if args.depth == std::u32::MAX { None } else { Some(args.depth as usize) },
+        min_file_size: args.min_size,
+        similarity_threshold: config.similarity_threshold,
+        parallel_processing: true,
+        thread_count,
+    };
 
-        let report = DeduplicationReport::new(
-            duplicate_groups,
-            total_files_found,
-            execution_time,
-            if execution_time.as_secs_f64() > 0.0 { 
-                total_files_found as f64 / execution_time.as_secs_f64() 
-            } else { 
-                0.0 
-            },
-            scan_config,
-        );
+    // Convert DuplicateGroup to Vec<Vec<FileInfo>> format expected by report
+    let duplicate_groups_for_report: Vec<Vec<FileInfo>> = all_duplicate_groups
+        .into_iter()
+        .map(|group| group.files)
+        .collect();
+    
+    let report = DeduplicationReport::new(
+        duplicate_groups_for_report,
+        total_files_found,
+        execution_time,
+        if execution_time.as_secs_f64() > 0.0 { 
+            total_files_found as f64 / execution_time.as_secs_f64() 
+        } else { 
+            0.0 
+        },
+        scan_config,
+    );
 
-        // Generate report in requested format
-        let report_content = match args.format.to_lowercase().as_str() {
-            "text" => report.to_text()?,
-            "json" => report.to_json_pretty()?,
-            "csv" => report.to_csv()?,
-            _ => {
-                eprintln!("Error: Unsupported format '{}'. Supported formats: text, json, csv", args.format);
-                std::process::exit(1);
-            }
-        };
+    // Generate report in requested format
+    let report_content = match args.format.to_lowercase().as_str() {
+        "text" => report.to_text()?,
+        "json" => report.to_json_pretty()?,
+        "csv" => report.to_csv()?,
+        _ => {
+            eprintln!("Error: Unsupported format '{}'. Supported formats: text, json, csv", args.format);
+            std::process::exit(1);
+        }
+    };
 
-        // Output to file or console
-        match args.output {
-            Some(output_path) => {
-                std::fs::write(&output_path, &report_content)?;
-                println!("💾 Report saved to: {}", output_path);
-            }
-            None => {
-                println!("{}", report_content);
-            }
+    // Output to file or console
+    match args.output {
+        Some(output_path) => {
+            std::fs::write(&output_path, &report_content)?;
+            println!("💾 Report saved to: {}", output_path);
+        }
+        None => {
+            println!("{}", report_content);
         }
     }
     

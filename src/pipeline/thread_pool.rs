@@ -186,6 +186,9 @@ mod tests {
             readonly: false,
             hidden: false,
             checksum: None,
+            quick_check: None,
+            statistical_info: None,
+            metadata: None,
         }).collect();
 
         WorkUnit {

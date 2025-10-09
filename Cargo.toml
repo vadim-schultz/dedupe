@@ -30,6 +30,7 @@ bytesize = "2.1.0"
 smallvec = "1.15.1"
 futures = "0.3.31"
 crossbeam-channel = "0.5"
+async-stream = "0.3"
 
 # Multi-threading dependencies (Phase 3)
 rayon = "1.8"
@@ -46,6 +47,7 @@ proptest = { version = "1.4", optional = true }
 # Report generation dependencies (Phase 6 partial)
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+tokio-stream = "0.1.17"
 
 [features]
 default = []
@@ -56,6 +58,10 @@ testing = ["proptest"]
 name = "parallel_pipeline"
 harness = false
 required-features = ["benchmarks"]
+
+[[example]]
+name = "streaming_demo"
+path = "examples/streaming_demo.rs"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

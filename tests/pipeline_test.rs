@@ -6,8 +6,10 @@ mod tests {
     use std::time::SystemTime;
     use tempfile::tempdir;
     use anyhow::Result;
-    use dedupe::pipeline::{Pipeline, MetadataStage, PipelineStage, ProcessingResult};
-    use dedupe::{FileInfo, Config};
+    use dedupe::pipeline::{Pipeline, PipelineStage, ProcessingResult};
+    use dedupe::pipeline::metadata::MetadataStage;
+    use dedupe::types::{FileInfo, QuickCheckInfo, StatisticalInfo};
+    use dedupe::Config;
     use camino::Utf8PathBuf;
 
     fn create_test_file(dir: &std::path::Path, name: &str, content: &[u8]) -> Result<FileInfo> {
@@ -27,6 +29,9 @@ mod tests {
             readonly: false,
             hidden: false,
             checksum: None,
+            metadata: None,
+            quick_check: None,
+            statistical_info: None,
         })
     }
 
@@ -142,6 +147,9 @@ mod tests {
             readonly: false,
             hidden: false,
             checksum: None,
+            metadata: None,
+            quick_check: None,
+            statistical_info: None,
         };
         let result = stage.process(vec![nonexistent]).await?;
         
