@@ -1,19 +1,18 @@
-use std::sync::{Arc, atomic::{AtomicUsize, AtomicU64, AtomicBool, Ordering}};
-use std::time::{Duration, Instant};
-use tokio::fs;
-use tokio::task::JoinHandle;
-use tokio::sync::mpsc;
-use tokio::time::timeout;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
+use tokio::fs;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tracing::{debug, info, warn};
 
-use crate::{
-    config::Config,
-    types::FileInfo,
-    utils::progress::ProgressTracker,
-};
+use crate::{config::Config, types::FileInfo, utils::progress::ProgressTracker};
 
 /// High-performance streaming walker configuration
 #[derive(Debug, Clone)]
@@ -32,13 +31,7 @@ pub struct HighPerformanceConfig {
 
 impl Default for HighPerformanceConfig {
     fn default() -> Self {
-        Self {
-            scanner_workers: (num_cpus::get() * 2).max(4),
-            discovery_buffer_size: 20_000,
-            max_directory_queue_size: 100_000,
-            output_batch_size: 200,
-            batch_timeout: Duration::from_millis(25),
-        }
+        Self::ultra_performance()
     }
 }
 
@@ -76,7 +69,7 @@ impl HighPerformanceStats {
             scan_complete: AtomicBool::new(false),
         })
     }
-    
+
     pub fn snapshot(&self) -> HighPerformanceSnapshot {
         HighPerformanceSnapshot {
             files_discovered: self.files_discovered.load(Ordering::Relaxed),
@@ -121,7 +114,7 @@ impl HighPerformanceWalker {
         hp_config: Option<HighPerformanceConfig>,
     ) -> Self {
         let hp_config = hp_config.unwrap_or_default();
-        
+
         Self {
             config,
             hp_config,
@@ -129,7 +122,7 @@ impl HighPerformanceWalker {
             stats: HighPerformanceStats::new(),
         }
     }
-    
+
     /// Stream files directly to a channel as they are discovered
     pub async fn stream_files(
         &self,
@@ -137,13 +130,15 @@ impl HighPerformanceWalker {
         file_sender: mpsc::Sender<FileInfo>,
     ) -> Result<HighPerformanceSnapshot> {
         let start_time = Instant::now();
-        
-        info!("Starting high-performance streaming scan with {} workers", 
-              self.hp_config.scanner_workers);
-        
+
+        info!(
+            "Starting high-performance streaming scan with {} workers",
+            self.hp_config.scanner_workers
+        );
+
         // Create directory queue
         let (dir_tx, dir_rx) = bounded(self.hp_config.max_directory_queue_size);
-        
+
         // Initialize root directories
         for root_path in root_paths {
             dir_tx.send(DirectoryEntry {
@@ -151,52 +146,52 @@ impl HighPerformanceWalker {
                 depth: 0,
             })?;
         }
-        
+
         // Create internal file channel for batching
-        let (internal_file_tx, mut internal_file_rx) = mpsc::channel(self.hp_config.discovery_buffer_size);
-        
+        let (internal_file_tx, mut internal_file_rx) =
+            mpsc::channel(self.hp_config.discovery_buffer_size);
+
         // Create progress bar
-        let discovery_progress = self.progress_tracker.create_scanning_bar(0);
-        discovery_progress.set_message("Discovering files...");
-        
+        let discovery_progress = self.progress_tracker.create_scanning_bar();
+        discovery_progress.set_message(ProgressTracker::discovery_status(0, 0));
+
         // Spawn directory scanner workers
-        let scanner_handles = self.spawn_scanner_workers(
-            dir_tx,
-            dir_rx,
-            internal_file_tx,
-            discovery_progress.clone(),
-        ).await?;
-        
+        let scanner_handles = self
+            .spawn_scanner_workers(dir_tx, dir_rx, internal_file_tx, discovery_progress.clone())
+            .await?;
+
         // Spawn file batcher that sends to external channel
         let stats_clone = Arc::clone(&self.stats);
         let batch_size = self.hp_config.output_batch_size;
         let batch_timeout = self.hp_config.batch_timeout;
-        
+
         let batcher_handle = tokio::spawn(async move {
             let mut current_batch = Vec::with_capacity(batch_size);
             let mut last_batch_time = Instant::now();
-            
+
             loop {
                 // Try to receive files with timeout
                 match timeout(batch_timeout, internal_file_rx.recv()).await {
                     Ok(Some(file)) => {
                         current_batch.push(file);
-                        
+
                         // Send batch if full or timeout reached
-                        if current_batch.len() >= batch_size || 
-                           last_batch_time.elapsed() >= batch_timeout {
-                            
+                        if current_batch.len() >= batch_size
+                            || last_batch_time.elapsed() >= batch_timeout
+                        {
                             if !current_batch.is_empty() {
                                 let batch_len = current_batch.len();
-                                
+
                                 // Send files individually to maintain streaming
                                 for file in current_batch.drain(..) {
                                     if file_sender.send(file).await.is_err() {
                                         return Ok(());
                                     }
                                 }
-                                
-                                stats_clone.files_sent_to_pipeline.fetch_add(batch_len, Ordering::Relaxed);
+
+                                stats_clone
+                                    .files_sent_to_pipeline
+                                    .fetch_add(batch_len, Ordering::Relaxed);
                                 last_batch_time = Instant::now();
                             }
                         }
@@ -214,53 +209,69 @@ impl HighPerformanceWalker {
                         // Timeout - send current batch if any
                         if !current_batch.is_empty() && last_batch_time.elapsed() >= batch_timeout {
                             let batch_len = current_batch.len();
-                            
+
                             for file in current_batch.drain(..) {
                                 if file_sender.send(file).await.is_err() {
                                     return Ok(());
                                 }
                             }
-                            
-                            stats_clone.files_sent_to_pipeline.fetch_add(batch_len, Ordering::Relaxed);
+
+                            stats_clone
+                                .files_sent_to_pipeline
+                                .fetch_add(batch_len, Ordering::Relaxed);
                             last_batch_time = Instant::now();
                         }
                     }
                 }
             }
-            
+
             Ok::<(), anyhow::Error>(())
         });
-        
+
         // Wait for all scanners to complete
         for handle in scanner_handles {
             if let Err(e) = handle.await {
                 warn!("Scanner worker error: {}", e);
-                self.stats.errors_encountered.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .errors_encountered
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
-        
+
         // Wait for batcher to complete
         if let Err(e) = batcher_handle.await {
             warn!("Batcher error: {}", e);
-            self.stats.errors_encountered.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .errors_encountered
+                .fetch_add(1, Ordering::Relaxed);
         }
-        
+
         // Mark scan as complete
         self.stats.scan_complete.store(true, Ordering::Relaxed);
-        
-        // Finish progress
-        discovery_progress.finish_with_message("✅ File discovery complete");
-        
+
         let duration = start_time.elapsed();
         let snapshot = self.stats.snapshot();
-        
-        info!("High-performance scan completed in {:.2}s", duration.as_secs_f64());
-        info!("Files discovered: {}, Directories: {}, Errors: {}", 
-              snapshot.files_discovered, snapshot.directories_processed, snapshot.errors_encountered);
-        
+
+        discovery_progress.finish_with_message(format!(
+            "{} ✅",
+            ProgressTracker::discovery_status(
+                snapshot.directories_processed,
+                snapshot.files_discovered
+            )
+        ));
+
+        info!(
+            "High-performance scan completed in {:.2}s",
+            duration.as_secs_f64()
+        );
+        info!(
+            "Files discovered: {}, Directories: {}, Errors: {}",
+            snapshot.files_discovered, snapshot.directories_processed, snapshot.errors_encountered
+        );
+
         Ok(snapshot)
     }
-    
+
     /// Spawn directory scanner worker tasks
     async fn spawn_scanner_workers(
         &self,
@@ -271,7 +282,7 @@ impl HighPerformanceWalker {
     ) -> Result<Vec<JoinHandle<()>>> {
         let mut handles = Vec::new();
         let max_depth = self.config.max_depth.unwrap_or(usize::MAX);
-        
+
         for worker_id in 0..self.hp_config.scanner_workers {
             let worker_config = Arc::clone(&self.config);
             let worker_stats = Arc::clone(&self.stats);
@@ -279,7 +290,7 @@ impl HighPerformanceWalker {
             let worker_dir_tx = dir_tx.clone();
             let worker_file_tx = file_tx.clone();
             let worker_progress = progress.clone();
-            
+
             let handle = tokio::spawn(async move {
                 Self::scanner_worker_task(
                     worker_id,
@@ -290,18 +301,19 @@ impl HighPerformanceWalker {
                     worker_file_tx,
                     worker_progress,
                     max_depth,
-                ).await;
+                )
+                .await;
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Close our reference to the directory sender
         drop(dir_tx);
-        
+
         Ok(handles)
     }
-    
+
     /// High-performance scanner worker task
     async fn scanner_worker_task(
         worker_id: usize,
@@ -315,9 +327,9 @@ impl HighPerformanceWalker {
     ) {
         let mut processed_dirs = 0;
         let mut discovered_files = 0;
-        
+
         debug!("Scanner worker {} started", worker_id);
-        
+
         loop {
             // Try to get next directory to process
             let entry = match dir_rx.recv_timeout(Duration::from_millis(100)) {
@@ -332,7 +344,7 @@ impl HighPerformanceWalker {
                     break;
                 }
             };
-            
+
             // Process this directory
             match Self::process_directory_hp(
                 &entry,
@@ -341,31 +353,41 @@ impl HighPerformanceWalker {
                 &file_tx,
                 max_depth,
                 &mut discovered_files,
-            ).await {
+            )
+            .await
+            {
                 Ok(_) => {
                     processed_dirs += 1;
                     stats.directories_processed.fetch_add(1, Ordering::Relaxed);
-                    
+
                     // Update progress occasionally
                     if processed_dirs % 5 == 0 {
-                        progress.inc(5);
                         progress.set_message(format!(
-                            "Worker {}: {} dirs, {} files",
-                            worker_id, processed_dirs, discovered_files
+                            "worker {:02} {}",
+                            worker_id + 1,
+                            ProgressTracker::discovery_status(processed_dirs, discovered_files)
                         ));
                     }
                 }
                 Err(e) => {
-                    warn!("Worker {} error processing {:?}: {}", worker_id, entry.path, e);
+                    warn!(
+                        "Worker {} error processing {:?}: {}",
+                        worker_id, entry.path, e
+                    );
                     stats.errors_encountered.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
-        
-        stats.files_discovered.fetch_add(discovered_files, Ordering::Relaxed);
-        debug!("Scanner worker {} completed: {} dirs, {} files", worker_id, processed_dirs, discovered_files);
+
+        stats
+            .files_discovered
+            .fetch_add(discovered_files, Ordering::Relaxed);
+        debug!(
+            "Scanner worker {} completed: {} dirs, {} files",
+            worker_id, processed_dirs, discovered_files
+        );
     }
-    
+
     /// Process a single directory with high performance optimizations
     async fn process_directory_hp(
         entry: &DirectoryEntry,
@@ -375,17 +397,18 @@ impl HighPerformanceWalker {
         max_depth: usize,
         discovered_files: &mut usize,
     ) -> Result<()> {
-        let mut entries = fs::read_dir(&entry.path).await
+        let mut entries = fs::read_dir(&entry.path)
+            .await
             .with_context(|| format!("Failed to read directory: {:?}", entry.path))?;
 
         while let Some(dir_entry) = entries.next_entry().await? {
             let path = dir_entry.path();
-            
+
             // Skip hidden files/directories early
             if Self::is_hidden(&path) {
                 continue;
             }
-            
+
             let metadata = match dir_entry.metadata().await {
                 Ok(meta) => meta,
                 Err(_) => continue, // Skip files we can't read metadata for
@@ -415,7 +438,7 @@ impl HighPerformanceWalker {
 
         Ok(())
     }
-    
+
     /// Create FileInfo with high-performance optimizations
     fn create_file_info_hp(
         path: std::path::PathBuf,
@@ -433,10 +456,14 @@ impl HighPerformanceWalker {
 
         // Check extension filter if configured (optimized)
         if !config.extensions.is_empty() {
-            let should_include = utf8_path.extension()
+            let should_include = utf8_path
+                .extension()
                 .map(|ext| {
                     let ext_lower = ext.to_lowercase();
-                    config.extensions.iter().any(|e| e.eq_ignore_ascii_case(&ext_lower))
+                    config
+                        .extensions
+                        .iter()
+                        .any(|e| e.eq_ignore_ascii_case(&ext_lower))
                 })
                 .unwrap_or(false);
 
@@ -447,14 +474,16 @@ impl HighPerformanceWalker {
 
         // Defer expensive operations like file type detection
         // These will be done in the metadata stage if needed
-        
+
         let (readonly, hidden) = Self::get_file_attributes_fast(&metadata, &utf8_path);
 
         Ok(Some(FileInfo {
             path: utf8_path,
             size,
             file_type: None, // Detected later in pipeline
-            modified: metadata.modified().unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH),
+            modified: metadata
+                .modified()
+                .unwrap_or_else(|_| std::time::SystemTime::UNIX_EPOCH),
             created: metadata.created().ok(),
             readonly,
             hidden,
@@ -464,16 +493,16 @@ impl HighPerformanceWalker {
             metadata: Some(metadata),
         }))
     }
-    
+
     /// Fast file attribute detection
-    fn get_file_attributes_fast(metadata: &std::fs::Metadata, _path: &Utf8PathBuf) -> (bool, bool) {
+    fn get_file_attributes_fast(metadata: &std::fs::Metadata, path: &Utf8PathBuf) -> (bool, bool) {
         #[cfg(windows)]
         {
             use std::os::windows::fs::MetadataExt;
             let attrs = metadata.file_attributes();
             (
-                (attrs & 0x1) != 0,  // FILE_ATTRIBUTE_READONLY
-                (attrs & 0x2) != 0,  // FILE_ATTRIBUTE_HIDDEN
+                (attrs & 0x1) != 0, // FILE_ATTRIBUTE_READONLY
+                (attrs & 0x2) != 0, // FILE_ATTRIBUTE_HIDDEN
             )
         }
 
@@ -482,7 +511,7 @@ impl HighPerformanceWalker {
             use std::os::unix::fs::MetadataExt;
             let mode = metadata.mode();
             (
-                (mode & 0o200) == 0,  // Write permission check
+                (mode & 0o200) == 0, // Write permission check
                 path.file_name()
                     .map(|name| name.starts_with('.'))
                     .unwrap_or(false),
@@ -490,9 +519,15 @@ impl HighPerformanceWalker {
         }
 
         #[cfg(not(any(windows, unix)))]
-        (false, false)
+        {
+            let hidden = path
+                .file_name()
+                .map(|name| name.starts_with('.'))
+                .unwrap_or(false);
+            (false, hidden)
+        }
     }
-    
+
     /// Fast hidden file check
     fn is_hidden(path: &std::path::Path) -> bool {
         path.file_name()
@@ -500,32 +535,44 @@ impl HighPerformanceWalker {
             .map(|name| name.starts_with('.'))
             .unwrap_or(false)
     }
-    
+
     /// Get current statistics
     pub fn get_stats(&self) -> HighPerformanceSnapshot {
         self.stats.snapshot()
     }
-    
+
     /// Print performance statistics
     pub fn print_stats(&self, duration: Duration) {
         let stats = self.get_stats();
-        
+
         println!("⚡ High-Performance Scan Statistics:");
         println!("   ├─ Files discovered: {}", stats.files_discovered);
-        println!("   ├─ Directories processed: {}", stats.directories_processed);
-        println!("   ├─ Files sent to pipeline: {}", stats.files_sent_to_pipeline);
-        println!("   ├─ Total size: {} MB", stats.total_size_bytes / 1024 / 1024);
+        println!(
+            "   ├─ Directories processed: {}",
+            stats.directories_processed
+        );
+        println!(
+            "   ├─ Files sent to pipeline: {}",
+            stats.files_sent_to_pipeline
+        );
+        println!(
+            "   ├─ Total size: {} MB",
+            stats.total_size_bytes / 1024 / 1024
+        );
         println!("   ├─ Scan duration: {:.3}s", duration.as_secs_f64());
-        
+
         if stats.errors_encountered > 0 {
             println!("   └─ ⚠️  {} errors encountered", stats.errors_encountered);
         } else {
             println!("   └─ ✅ No errors");
         }
-        
+
         if duration.as_secs_f64() > 0.0 {
             let discovery_rate = stats.files_discovered as f64 / duration.as_secs_f64();
-            println!("🚀 Performance: {:.0} files/sec discovery rate", discovery_rate);
+            println!(
+                "🚀 Performance: {:.0} files/sec discovery rate",
+                discovery_rate
+            );
         }
     }
 }

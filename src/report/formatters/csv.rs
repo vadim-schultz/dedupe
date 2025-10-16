@@ -1,7 +1,7 @@
 //! CSV formatter for tabular data
 
-use std::fmt::Write;
 use anyhow::Result;
+use std::fmt::Write;
 
 use crate::report::DeduplicationReport;
 
@@ -9,26 +9,28 @@ use crate::report::DeduplicationReport;
 /// Creates a CSV with one row per duplicate file
 pub fn format_report(report: &DeduplicationReport) -> Result<String> {
     let mut output = String::new();
-    
+
     // CSV Header
     writeln!(output, "group_id,similarity,file_path,file_size,modified_date,file_type,is_primary,potential_savings")?;
-    
+
     // Data rows
     for group in &report.duplicate_groups {
         for file in &group.files {
-            let modified = file.modified
+            let modified = file
+                .modified
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| {
-                    let dt = chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
-                        .unwrap_or_default();
+                    let dt =
+                        chrono::DateTime::from_timestamp(d.as_secs() as i64, 0).unwrap_or_default();
                     dt.format("%Y-%m-%d %H:%M:%S").to_string()
                 })
                 .unwrap_or_else(|_| "unknown".to_string());
-                
+
             let file_type = file.file_type.as_deref().unwrap_or("unknown");
             let savings = if file.is_primary { 0 } else { file.size };
-            
-            writeln!(output, 
+
+            writeln!(
+                output,
                 "{},{},{},{},\"{}\",\"{}\",{},{}",
                 group.id,
                 group.similarity,
@@ -41,7 +43,7 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
             )?;
         }
     }
-    
+
     Ok(output)
 }
 
@@ -57,7 +59,7 @@ fn escape_csv_field(field: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::report::{DeduplicationStats, ScanConfig, DuplicateGroup, FileEntry};
+    use crate::report::{DeduplicationStats, DuplicateGroup, FileEntry, ScanConfig};
     use std::time::SystemTime;
 
     #[test]

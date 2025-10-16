@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use async_trait::async_trait;
-use tracing::{debug, info, warn};
 use crate::{
-    types::{FileInfo, DuplicateGroup, PipelineError},
+    types::{DuplicateGroup, FileInfo, PipelineError},
     utils::progress::ProgressTracker,
 };
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::{debug, info, warn};
 
 /// Messages that flow through the streaming pipeline
 #[derive(Debug)]
@@ -26,10 +26,10 @@ pub trait StreamingStage: Send + Sync {
         input: mpsc::Receiver<StreamingMessage>,
         output: mpsc::Sender<StreamingMessage>,
     ) -> Result<(), PipelineError>;
-    
+
     /// Get stage name for logging and progress tracking
     fn stage_name(&self) -> &'static str;
-    
+
     /// Whether this stage groups files (final stage)
     fn produces_groups(&self) -> bool {
         false
@@ -85,46 +85,51 @@ impl StreamingPipeline {
             progress_tracker: None,
         }
     }
-    
+
     pub fn set_progress_tracker(&mut self, tracker: Arc<ProgressTracker>) {
         self.progress_tracker = Some(tracker);
     }
-    
+
     pub fn add_stage<S: StreamingStage + 'static>(&mut self, stage: S) {
         self.stages.push(Box::new(stage));
     }
-    
+
     /// Start the streaming pipeline with a file receiver
     pub async fn start_streaming(
         &mut self,
         file_stream: mpsc::Receiver<FileInfo>,
     ) -> Result<Vec<DuplicateGroup>, PipelineError> {
         if self.stages.is_empty() {
-            return Err(PipelineError::Configuration("No stages added to pipeline".to_string()));
+            return Err(PipelineError::Configuration(
+                "No stages added to pipeline".to_string(),
+            ));
         }
-        
-        info!("Starting streaming pipeline with {} stages", self.stages.len());
-        
+
+        info!(
+            "Starting streaming pipeline with {} stages",
+            self.stages.len()
+        );
+
         // Create channels between stages
         let mut stage_channels = Vec::new();
-        
+
         // First stage gets files from input
         let (first_tx, first_rx) = mpsc::channel(self.config.channel_capacity);
         stage_channels.push((first_tx.clone(), Some(first_rx)));
-        
+
         // Create intermediate channels
         for _ in 1..self.stages.len() {
             let (tx, rx) = mpsc::channel(self.config.channel_capacity);
             stage_channels.push((tx, Some(rx)));
         }
-        
+
         // Final stage sends to result collector
         let (result_tx, mut result_rx) = mpsc::channel(self.config.channel_capacity);
-        
+
         // Start all stages
         let mut stage_handles = Vec::new();
         let stages = std::mem::take(&mut self.stages);
-        
+
         for (i, mut stage) in stages.into_iter().enumerate() {
             let input_rx = stage_channels[i].1.take().unwrap();
             let output_tx = if i == stage_channels.len() - 1 {
@@ -132,7 +137,7 @@ impl StreamingPipeline {
             } else {
                 stage_channels[i + 1].0.clone()
             };
-            
+
             let stage_name = stage.stage_name();
             let handle = tokio::spawn(async move {
                 debug!("Starting stage: {}", stage_name);
@@ -142,50 +147,54 @@ impl StreamingPipeline {
                 }
                 result
             });
-            
+
             stage_handles.push(handle);
         }
-        
+
         // File input handler - converts file stream to batched messages
         let first_tx_clone = first_tx.clone();
         let batch_size = self.config.batch_size;
         let flush_interval = self.config.flush_interval;
-        
+
         let input_handle = tokio::spawn(async move {
             let mut file_stream = file_stream;
             let mut batch = Vec::new();
             let mut last_flush = std::time::Instant::now();
             let mut total_files = 0;
-            
+
             while let Some(file) = file_stream.recv().await {
                 batch.push(file);
                 total_files += 1;
-                
+
                 if batch.len() >= batch_size || last_flush.elapsed() >= flush_interval {
                     if !batch.is_empty() {
-                        if first_tx_clone.send(StreamingMessage::Batch(std::mem::take(&mut batch))).await.is_err() {
+                        if first_tx_clone
+                            .send(StreamingMessage::Batch(std::mem::take(&mut batch)))
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                         last_flush = std::time::Instant::now();
                     }
                 }
             }
-            
+
             // Send final batch and shutdown
             if !batch.is_empty() {
                 let _ = first_tx_clone.send(StreamingMessage::Batch(batch)).await;
             }
             let _ = first_tx_clone.send(StreamingMessage::Flush).await;
             let _ = first_tx_clone.send(StreamingMessage::Shutdown).await;
-            
+
             debug!("Input handler processed {} files", total_files);
         });
-        
+
         // Result collector
         let result_handle = tokio::spawn(async move {
             let mut all_groups = Vec::new();
             let mut processed_files = 0;
-            
+
             while let Some(message) = result_rx.recv().await {
                 match message {
                     StreamingMessage::Groups(mut groups) => {
@@ -197,36 +206,55 @@ impl StreamingPipeline {
                         processed_files += files.len();
                     }
                     StreamingMessage::Shutdown => {
-                        debug!("Result collector shutting down, processed {} files", processed_files);
+                        debug!(
+                            "Result collector shutting down, processed {} files",
+                            processed_files
+                        );
                         break;
                     }
                     _ => {}
                 }
             }
-            
+
             all_groups
         });
-        
+
         // Wait for input processing to complete
-        input_handle.await.map_err(|e| PipelineError::Runtime(e.to_string()))?;
-        
+        input_handle
+            .await
+            .map_err(|e| PipelineError::Runtime(e.to_string()))?;
+
         // Wait for all stages to complete
         for handle in stage_handles {
-            handle.await.map_err(|e| PipelineError::Runtime(e.to_string()))??;
+            handle
+                .await
+                .map_err(|e| PipelineError::Runtime(e.to_string()))??;
         }
-        
+
         // Get final results
-        let results = result_handle.await.map_err(|e| PipelineError::Runtime(e.to_string()))?;
-        
-        info!("Streaming pipeline completed, found {} duplicate groups", results.len());
+        let results = result_handle
+            .await
+            .map_err(|e| PipelineError::Runtime(e.to_string()))?;
+
+        info!(
+            "Streaming pipeline completed, found {} duplicate groups",
+            results.len()
+        );
         Ok(results)
     }
 }
 
 /// Helper trait to create progress bars for stages
+//
+// This trait is used to track progress in streaming stages.
+//
 pub trait ProgressTrackingStage {
-    fn create_progress_bar(&self, tracker: &ProgressTracker, stage_name: &str) -> indicatif::ProgressBar {
-        tracker.create_progress_bar(0, stage_name)
+    fn create_progress_bar(
+        &self,
+        tracker: &ProgressTracker,
+        stage_name: &str,
+    ) -> indicatif::ProgressBar {
+        tracker.create_stage_bar(stage_name)
     }
 }
 
@@ -247,17 +275,17 @@ impl StreamBatcher {
             flush_interval,
         }
     }
-    
+
     pub fn add_file(&mut self, file: FileInfo) -> Option<Vec<FileInfo>> {
         self.batch.push(file);
-        
+
         if self.batch.len() >= self.batch_size || self.last_flush.elapsed() >= self.flush_interval {
             self.flush()
         } else {
             None
         }
     }
-    
+
     pub fn flush(&mut self) -> Option<Vec<FileInfo>> {
         if self.batch.is_empty() {
             None

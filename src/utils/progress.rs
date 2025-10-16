@@ -1,19 +1,24 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use std::sync::Arc;
-use std::collections::HashMap;
 use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Enhanced progress tracker supporting multiple stages with dynamic progress bars
+/// Braille-based progress tracker suitable for concise TTY output.
 pub struct ProgressTracker {
     multi_progress: Arc<MultiProgress>,
-    stage_bars: Arc<Mutex<HashMap<String, Vec<ProgressBar>>>>,
+    stage_bars: Arc<Mutex<HashMap<String, ProgressBar>>>,
+    scanner_bar: Arc<Mutex<Option<ProgressBar>>>,
 }
 
 impl ProgressTracker {
+    const BRAILLE_STEPS: [char; 9] = ['⠀', '⠂', '⠆', '⠒', '⠲', '⠷', '⠿', '⡿', '⣿'];
+    const MINI_BAR_WIDTH: usize = 12;
+
     pub fn new() -> Self {
         Self {
             multi_progress: Arc::new(MultiProgress::new()),
             stage_bars: Arc::new(Mutex::new(HashMap::new())),
+            scanner_bar: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -22,130 +27,102 @@ impl ProgressTracker {
         self.multi_progress.clone()
     }
 
-    /// Create a progress bar for file scanning
-    pub fn create_scanning_bar(&self, total_files: u64) -> ProgressBar {
-        let pb = self.multi_progress.add(ProgressBar::new(total_files));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("🔍 Scanning:     [{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} files {msg}")
-                .unwrap()
-                .progress_chars("█▉▊▋▌▍▎▏ "),
-        );
+    /// Create (or replace) the discovery progress bar using braille mini-bar styling.
+    pub fn create_scanning_bar(&self) -> ProgressBar {
+        let pb = self.multi_progress.add(Self::new_spinner());
+        pb.set_message(Self::discovery_status(0, 0));
+        *self.scanner_bar.lock() = Some(pb.clone());
         pb
     }
 
-    /// Create progress bars for a pipeline stage
-    pub fn create_stage_bars(&self, stage_name: &str, thread_count: usize, total_files: u64) -> Vec<ProgressBar> {
-        let mut bars = Vec::new();
-        let files_per_thread = if thread_count > 1 {
-            (total_files + thread_count as u64 - 1) / thread_count as u64
-        } else {
-            total_files
-        };
-
-        for i in 0..thread_count {
-            let pb = self.multi_progress.add(ProgressBar::new(files_per_thread));
-            let stage_emoji = match stage_name.to_lowercase().as_str() {
-                "metadata" => "📊",
-                "quickcheck" => "⚡",
-                "statistical" => "🧮",
-                "hash" => "🔐",
-                _ => "🔄",
-            };
-            
-            let template = if thread_count > 1 {
-                format!("{} {:<11} [{}/{}]: [{{elapsed_precise}}] {{bar:30.green/yellow}} {{pos:>7}}/{{len:7}} {{msg}}", 
-                    stage_emoji, 
-                    format!("{}:", stage_name),
-                    i + 1, 
-                    thread_count
-                )
-            } else {
-                format!("{} {:<11}     [{{elapsed_precise}}] {{bar:40.green/yellow}} {{pos:>7}}/{{len:7}} {{msg}}", 
-                    stage_emoji,
-                    format!("{}:", stage_name)
-                )
-            };
-
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(&template)
-                    .unwrap()
-                    .progress_chars("█▉▊▋▌▍▎▏ "),
-            );
-            
-            bars.push(pb);
-        }
-
-        // Store bars for this stage
+    /// Create (or fetch) the progress bar for a named stage.
+    pub fn create_stage_bar(&self, stage_name: &str) -> ProgressBar {
         let mut stage_bars = self.stage_bars.lock();
-        stage_bars.insert(stage_name.to_string(), bars.clone());
-
-        bars
-    }
-
-    /// Get progress bars for a specific stage
-    pub fn get_stage_bars(&self, stage_name: &str) -> Option<Vec<ProgressBar>> {
-        let stage_bars = self.stage_bars.lock();
-        stage_bars.get(stage_name).cloned()
-    }
-
-    /// Finish all progress bars for a stage
-    pub fn finish_stage(&self, stage_name: &str) {
-        if let Some(bars) = self.get_stage_bars(stage_name) {
-            for bar in bars {
-                bar.finish_with_message("✅ Complete");
-            }
+        if let Some(existing) = stage_bars.get(stage_name) {
+            return existing.clone();
         }
-    }
 
-    /// Create a legacy progress bar (for backward compatibility)
-    pub fn create_progress_bar(&self, len: u64, name: &str) -> ProgressBar {
-        let pb = self.multi_progress.add(ProgressBar::new(len));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template(&format!("{{spinner}} {}: [{{elapsed_precise}}] {{bar:40.cyan/blue}} {{pos}}/{{len}} {{msg}}", name))
-                .unwrap()
-                .progress_chars("=>-"),
-        );
+        let pb = self.multi_progress.add(Self::new_spinner());
+        pb.set_message(Self::stage_progress(stage_name, 0));
+        stage_bars.insert(stage_name.to_string(), pb.clone());
         pb
     }
 
-    /// Update progress for a specific stage and worker
-    pub fn update_stage_progress(&self, stage_name: &str, worker_id: usize, current: usize, _total: u64) {
-        if let Some(bars) = self.get_stage_bars(stage_name) {
-            if let Some(bar) = bars.get(worker_id) {
-                bar.set_position(current as u64);
-            }
+    /// Render a braille mini-bar for a given count.
+    pub fn render_braille_bar(count: usize) -> String {
+        let steps_per_cell = Self::BRAILLE_STEPS.len() - 1;
+        let mut bar = String::with_capacity(Self::MINI_BAR_WIDTH);
+
+        for cell in 0..Self::MINI_BAR_WIDTH {
+            let lower_bound = cell * steps_per_cell;
+            let cell_value = count.saturating_sub(lower_bound);
+            let index = if cell_value >= steps_per_cell {
+                steps_per_cell
+            } else {
+                cell_value
+            };
+            bar.push(Self::BRAILLE_STEPS[index]);
         }
+
+        bar
     }
 
-    /// Update scanning progress (legacy method)
-    pub fn update_scanning_progress(&self, _worker_id: usize, current: usize, _total: u64) {
-        // This is a legacy method - scanning progress should use update_stage_progress instead
-        // but we keep it for compatibility
-        if let Some(bars) = self.get_stage_bars("Scanning") {
-            if let Some(bar) = bars.first() {
-                bar.set_position(current as u64);
-            }
-        }
+    /// Format an activity line for a stage during processing.
+    pub fn stage_progress(stage_name: &str, count: usize) -> String {
+        format!(
+            "{:<11} {} {:>7}",
+            stage_name,
+            Self::render_braille_bar(count),
+            count
+        )
     }
 
-    /// Finish all progress bars and clean up the MultiProgress
+    /// Format the final line for a stage once completed.
+    pub fn stage_complete(stage_name: &str, count: usize) -> String {
+        format!(
+            "{:<11} {} {:>7} ✅",
+            stage_name,
+            Self::render_braille_bar(Self::MINI_BAR_WIDTH * (Self::BRAILLE_STEPS.len() - 1)),
+            count
+        )
+    }
+
+    /// Format discovery progress (directories/files) for the walker.
+    pub fn discovery_status(directories: usize, files: usize) -> String {
+        format!(
+            "{:<11} {} {:>7} files {:>5} dirs",
+            "discover",
+            Self::render_braille_bar(files),
+            files,
+            directories
+        )
+    }
+
+    /// Finish all tracked progress bars and clear the multi progress container.
     pub fn finish_all(&self) {
-        // Finish all stored progress bars
-        let stage_bars = self.stage_bars.lock();
-        for (_, bars) in stage_bars.iter() {
-            for bar in bars {
-                if !bar.is_finished() {
-                    bar.finish_with_message("✅ Complete");
-                }
+        if let Some(scanner) = self.scanner_bar.lock().take() {
+            if !scanner.is_finished() {
+                scanner.finish()
             }
         }
-        drop(stage_bars);
-        
-        // Clear the MultiProgress to allow proper shutdown
+
+        for bar in self.stage_bars.lock().values() {
+            if !bar.is_finished() {
+                bar.finish();
+            }
+        }
+
         self.multi_progress.clear().ok();
+    }
+
+    fn new_spinner() -> ProgressBar {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::with_template("{msg}")
+                .expect("braille template")
+                .tick_strings(&[""]),
+        );
+        pb
     }
 }
 

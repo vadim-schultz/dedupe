@@ -1,15 +1,15 @@
 //! Text formatter for human-readable console output
 
-use std::fmt::Write;
 use anyhow::Result;
 use bytesize::ByteSize;
+use std::fmt::Write;
 
 use crate::report::DeduplicationReport;
 
 /// Format a deduplication report as human-readable text
 pub fn format_report(report: &DeduplicationReport) -> Result<String> {
     let mut output = String::new();
-    
+
     // Header
     writeln!(output, "═══════════════════════════════════════")?;
     writeln!(output, "           DEDUPLICATION REPORT")?;
@@ -21,9 +21,21 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
     writeln!(output, "📊 SCAN STATISTICS")?;
     writeln!(output, "─────────────────────────────────────")?;
     writeln!(output, "Files scanned:      {:>8}", stats.total_files)?;
-    writeln!(output, "Total size:         {:>8}", ByteSize::b(stats.total_size))?;
-    writeln!(output, "Scan duration:      {:>8.2}s", stats.scan_duration.as_secs_f64())?;
-    writeln!(output, "Throughput:         {:>8.1} files/sec", stats.throughput)?;
+    writeln!(
+        output,
+        "Total size:         {:>8}",
+        ByteSize::b(stats.total_size)
+    )?;
+    writeln!(
+        output,
+        "Scan duration:      {:>8.2}s",
+        stats.scan_duration.as_secs_f64()
+    )?;
+    writeln!(
+        output,
+        "Throughput:         {:>8.1} files/sec",
+        stats.throughput
+    )?;
     writeln!(output)?;
 
     // Duplicate statistics
@@ -31,8 +43,12 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
     writeln!(output, "─────────────────────────────────────")?;
     writeln!(output, "Duplicate groups:   {:>8}", stats.duplicate_groups)?;
     writeln!(output, "Duplicate files:    {:>8}", stats.duplicate_files)?;
-    writeln!(output, "Potential savings:  {:>8}", ByteSize::b(stats.potential_savings))?;
-    
+    writeln!(
+        output,
+        "Potential savings:  {:>8}",
+        ByteSize::b(stats.potential_savings)
+    )?;
+
     if stats.total_size > 0 {
         let savings_percentage = (stats.potential_savings as f64 / stats.total_size as f64) * 100.0;
         writeln!(output, "Space efficiency:   {:>8.1}%", savings_percentage)?;
@@ -44,9 +60,25 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
     writeln!(output, "⚙️  SCAN CONFIGURATION")?;
     writeln!(output, "─────────────────────────────────────")?;
     writeln!(output, "Directory:          {}", config.directory)?;
-    writeln!(output, "Min file size:      {}", ByteSize::b(config.min_file_size))?;
-    writeln!(output, "Similarity threshold: {}%", config.similarity_threshold)?;
-    writeln!(output, "Parallel processing: {}", if config.parallel_processing { "Yes" } else { "No" })?;
+    writeln!(
+        output,
+        "Min file size:      {}",
+        ByteSize::b(config.min_file_size)
+    )?;
+    writeln!(
+        output,
+        "Similarity threshold: {}%",
+        config.similarity_threshold
+    )?;
+    writeln!(
+        output,
+        "Parallel processing: {}",
+        if config.parallel_processing {
+            "Yes"
+        } else {
+            "No"
+        }
+    )?;
     writeln!(output, "Thread count:       {}", config.thread_count)?;
     if let Some(depth) = config.max_depth {
         writeln!(output, "Max depth:          {}", depth)?;
@@ -59,18 +91,21 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
     if !report.duplicate_groups.is_empty() {
         writeln!(output, "📁 DUPLICATE GROUPS")?;
         writeln!(output, "─────────────────────────────────────")?;
-        
+
         for group in &report.duplicate_groups {
-            writeln!(output, "Group {}: {} files, {} total size, {} savings", 
-                group.id, 
+            writeln!(
+                output,
+                "Group {}: {} files, {} total size, {} savings",
+                group.id,
                 group.files.len(),
                 ByteSize::b(group.total_size),
                 ByteSize::b(group.potential_savings)
             )?;
-            
+
             for file in &group.files {
                 let marker = if file.is_primary { "🟢 " } else { "🔴 " };
-                let modified = file.modified
+                let modified = file
+                    .modified
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| {
                         let dt = chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
@@ -78,7 +113,7 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
                         dt.format("%Y-%m-%d %H:%M:%S").to_string()
                     })
                     .unwrap_or_else(|_| "unknown".to_string());
-                
+
                 writeln!(output, "  {}{} ({})", marker, file.path, modified)?;
             }
             writeln!(output)?;
@@ -90,7 +125,10 @@ pub fn format_report(report: &DeduplicationReport) -> Result<String> {
 
     // Footer with legend
     if !report.duplicate_groups.is_empty() {
-        writeln!(output, "Legend: 🟢 = Keep (newest/primary)  🔴 = Duplicate (can be removed)")?;
+        writeln!(
+            output,
+            "Legend: 🟢 = Keep (newest/primary)  🔴 = Duplicate (can be removed)"
+        )?;
     }
 
     Ok(output)

@@ -1,13 +1,13 @@
 //! Report generation module for dedupe results
-//! 
+//!
 //! Provides functionality to generate reports in multiple formats:
 //! - Text (human-readable console output)
 //! - JSON (structured data for APIs)
 //! - CSV (tabular data for spreadsheets)
 
-use std::time::{Duration, SystemTime};
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime};
 
 use crate::types::FileInfo;
 

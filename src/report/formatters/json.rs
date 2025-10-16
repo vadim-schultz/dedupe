@@ -41,7 +41,7 @@ mod tests {
         assert!(json.contains("stats"));
         assert!(json.contains("duplicate_groups"));
         assert!(json.contains("/test"));
-        
+
         // Verify it's valid JSON
         let _: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
@@ -65,7 +65,7 @@ mod tests {
         let json = format_report_pretty(&report).unwrap();
         assert!(json.contains("{\n")); // Check for pretty formatting
         assert!(json.contains("  ")); // Check for indentation
-        
+
         // Verify it's valid JSON
         let _: serde_json::Value = serde_json::from_str(&json).unwrap();
     }

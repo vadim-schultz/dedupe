@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use config::{Config as ConfigBuilder, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -15,26 +15,27 @@ pub enum Error {
 pub struct Config {
     /// Maximum directory traversal depth
     pub max_depth: Option<usize>,
-    
+
     /// Minimum file size to consider (in bytes)
     pub min_file_size: u64,
-    
+
     /// Number of threads per pipeline stage
     pub threads_per_stage: usize,
-    
+
     /// Size of the sample for quick content check (in bytes)
     pub quick_check_sample_size: usize,
-    
+
     /// Similarity threshold for fuzzy matching (0-100)
     pub similarity_threshold: u8,
 
     /// Operation mode (report, remove, interactive)
     pub mode: OperationMode,
-    
+
     /// Enable parallel scanning
     pub parallel_scan: bool,
-    
+
     /// File extensions to include (empty means all)
+    #[serde(default)]
     pub extensions: Vec<String>,
 }
 

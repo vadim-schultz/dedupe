@@ -1,7 +1,7 @@
 //! Tests for the report generation functionality
 
-use std::time::{Duration, SystemTime};
 use anyhow::Result;
+use std::time::{Duration, SystemTime};
 
 use dedupe::report::{DeduplicationReport, DeduplicationStats, ScanConfig};
 use dedupe::types::FileInfo;
@@ -105,7 +105,7 @@ fn test_single_file_groups_ignored() {
 
 #[test]
 fn test_primary_file_selection() -> Result<()> {
-    use std::time::{UNIX_EPOCH, Duration as StdDuration};
+    use std::time::{Duration as StdDuration, UNIX_EPOCH};
 
     let old_time = UNIX_EPOCH + StdDuration::from_secs(1000);
     let new_time = UNIX_EPOCH + StdDuration::from_secs(2000);

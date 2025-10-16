@@ -1,6 +1,6 @@
-use std::time::SystemTime;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
